@@ -36,6 +36,7 @@ def slug(s):
 
 
 def run(render=False, contrast=False, out_dir=REPO / "eval" / "results"):
+    commit = _commit()  # before writing results, which would make the tree look dirty
     out_dir.mkdir(parents=True, exist_ok=True)
     formats = json.loads(CATALOGUE.read_text())
     tasks = [(p.stem.replace("chameleon_sample_", ""), json.loads(p.read_text())) for p in SAMPLES]
@@ -43,6 +44,9 @@ def run(render=False, contrast=False, out_dir=REPO / "eval" / "results"):
         from eval.render import render_image
         (out_dir / "renders").mkdir(exist_ok=True)
     _warm_up(tasks[0][1]["source"], render)
+    if render:
+        for sample, task in tasks:  # the original designs, for side-by-side review
+            render_image(task["source"]).save(out_dir / "renders" / f"source__{sample}.png")
 
     rows, thumbs = [], []
     for sample, task in tasks:
@@ -77,7 +81,7 @@ def run(render=False, contrast=False, out_dir=REPO / "eval" / "results"):
             rows.append(row)
 
     _write_csv(rows, out_dir / "cases.csv")
-    summary = _summary(rows, formats, render, contrast)
+    summary = _summary(rows, formats, render, contrast, commit)
     (out_dir / "summary.md").write_text(summary)
     if render:
         _contact_sheet(thumbs, [t[0] for t in tasks], [f["name"] for f in formats], out_dir / "contact_sheet.png")
@@ -103,7 +107,15 @@ def _write_csv(rows, path):
             w.writerow({k: (f"{v:.4g}" if isinstance(v, float) else v) for k, v in r.items()})
 
 
-def _summary(rows, formats, render, contrast):
+def _commit():
+    try:
+        return subprocess.run(["git", "describe", "--always", "--dirty"], cwd=REPO, capture_output=True,
+                              text=True).stdout.strip() or "?"
+    except OSError:
+        return "?"
+
+
+def _summary(rows, formats, render, contrast, commit):
     def mean(xs):
         xs = [x for x in xs if x is not None]
         return statistics.mean(xs) if xs else float("nan")
@@ -112,10 +124,6 @@ def _summary(rows, formats, render, contrast):
         xs = [r[key] for r in rows if key in r]
         return f"mean {statistics.mean(xs):.2f} ms, median {statistics.median(xs):.2f} ms, max {max(xs):.2f} ms" if xs else "n/a"
 
-    try:
-        commit = subprocess.run(["git", "describe", "--always", "--dirty"], cwd=REPO, capture_output=True, text=True).stdout.strip()
-    except OSError:
-        commit = "?"
     passed = sum(r["passed"] for r in rows)
     by_rule = Counter()
     cases_by_rule = Counter()
