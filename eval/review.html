@@ -130,12 +130,13 @@ function stage(src, alt) {
 
 function card(c) {
   const verdict = labels[c.case]?.verdict || "";
-  const was = labels[c.case]?.engine;
+  const l = labels[c.case];
   const status = el("div", { class: "status", role: "status" },
-                    verdict && was !== commit ? `Verdict given on engine ${was}; this output is from ${commit}` : "");
+                    verdict && !l.current ? `Verdict given on an earlier output (engine ${l.engine}); this one is from ${commit}. Click to label it.` : "");
   const buttons = VERDICTS.map(([v, label]) => el("button", {
     type: "button", "data-v": v, "aria-pressed": String(verdict === v),
-    onclick: () => save(c.case, verdict === v ? null : v, status),  // clicking the active verdict clears it
+    // clicking the active verdict clears it; on a stale verdict it confirms it for the output shown now
+    onclick: () => save(c.case, verdict === v && labels[c.case]?.current ? null : v, status),
   }, label));
 
   const rows = Object.entries(c.penalties).map(([k, p]) => el("tr", {},

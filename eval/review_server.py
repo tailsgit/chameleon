@@ -5,8 +5,11 @@
 
 Serves eval/review.html, the renders, the per-case results, and saves Good / Okay /
 Bad verdicts to eval/results/labels.json (written atomically on every click).
-Each verdict records the score and engine commit it was given against, so later
-runs can tell which labels are stale. Binds to 127.0.0.1 only. Standard library only.
+Each verdict stores the exact output JSON it was given on (from
+eval/results/outputs/<case>.json), plus its score and engine commit, so
+eval.calibrate can use labels from any engine version. Labelling a case whose
+output has changed moves the old verdict into that case's `history` instead of
+overwriting it. Binds to 127.0.0.1 only. Standard library only.
 """
 
 import argparse
@@ -23,6 +26,7 @@ from pathlib import Path
 EVAL = Path(__file__).resolve().parent
 RESULTS = EVAL / "results"
 RENDERS = RESULTS / "renders"
+OUTPUTS = RESULTS / "outputs"
 LABELS = RESULTS / "labels.json"
 VERDICTS = {"good", "okay", "bad"}
 _lock = threading.Lock()
@@ -61,6 +65,41 @@ def read_labels():
         return {}
 
 
+def current_output(case):
+    try:
+        return json.loads((OUTPUTS / f"{case}.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def public_labels(labels):
+    """What the page needs: current verdicts, and whether each was given on the output shown now."""
+    out = {}
+    for case, e in labels.items():
+        if e.get("verdict"):
+            out[case] = {k: e.get(k) for k in ("verdict", "score", "engine", "at")}
+            out[case]["current"] = e.get("output") is not None and e.get("output") == current_output(case)
+    return out
+
+
+def apply_verdict(labels, case, verdict, output, score, engine):
+    """New verdict on `output`; an earlier verdict on a different output goes to history."""
+    entry = labels.get(case, {})
+    history = entry.get("history", [])
+    if entry.get("verdict") and entry.get("output") != output:
+        history = history + [{k: v for k, v in entry.items() if k != "history"}]
+    if verdict is None:
+        labels.pop(case, None)
+        if history:
+            labels[case] = {"history": history}
+        return labels
+    labels[case] = {"verdict": verdict, "score": score, "engine": engine, "output": output,
+                    "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    if history:
+        labels[case]["history"] = history
+    return labels
+
+
 def write_labels(labels):
     fd, tmp = tempfile.mkstemp(dir=RESULTS, prefix=".labels.", suffix=".json")
     with os.fdopen(fd, "w") as f:
@@ -76,7 +115,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/cases":
             return self._json({"commit": engine_commit(), "cases": load_cases()})
         if path == "/api/labels":
-            return self._json(read_labels())
+            return self._json(public_labels(read_labels()))
         m = re.fullmatch(r"/renders/([A-Za-z0-9_\-]+\.png)", path)  # plain file names only: no traversal
         if m and (RENDERS / m.group(1)).is_file():
             return self._send(200, (RENDERS / m.group(1)).read_bytes(), "image/png")
@@ -93,15 +132,13 @@ class Handler(BaseHTTPRequestHandler):
         cases = {c["case"]: c for c in load_cases()}
         if case not in cases or (verdict is not None and verdict not in VERDICTS):
             return self._send(400, b"unknown case or verdict", "text/plain")
+        output = current_output(case)
+        if output is None:
+            return self._send(409, b"no output snapshot for this case; rerun python -m eval.bench --render", "text/plain")
         with _lock:
-            labels = read_labels()
-            if verdict is None:
-                labels.pop(case, None)
-            else:
-                labels[case] = {"verdict": verdict, "score": cases[case]["total"], "engine": engine_commit(),
-                                "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            labels = apply_verdict(read_labels(), case, verdict, output, cases[case]["total"], engine_commit())
             write_labels(labels)
-        self._json(labels)
+        self._json(public_labels(labels))
 
     def _json(self, obj):
         self._send(200, json.dumps(obj).encode(), "application/json")

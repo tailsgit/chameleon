@@ -255,7 +255,8 @@ def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue):
     for ln in lines:
         lh = max(e.h for _u, e in ln)
         lw = sum(e.w for _u, e in ln) + gap * (len(ln) - 1)
-        x = x0 + (W - lw) / 2 if align == "center" else x0
+        focal = all(a.units[u].emphasis for u, _e in ln)  # a line of stand-out units sits on the column's axis
+        x = x0 + (W - lw) / 2 if align == "center" or focal else x0
         for uid, e in ln:
             slots.append(Slot(uid, x, y + (lh - e.h) / 2, e.w, e.h, fs=e.fs, scale=e.scale, slack=e.slack))
             x += e.w + gap

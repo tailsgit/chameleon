@@ -94,3 +94,69 @@ def test_same_aspect_keeps_the_source_layout():
     target = {"width": 864, "height": 1080}  # 4:5 like the 1080x1350 source
     out = resize(task["source"], target)
     assert out == engine.select.fallback(task["source"], target) and check(task["source"], target, out) == []
+
+
+def _ribbon_on_card():
+    """A rotated ribbon across the top-right corner of a product card (not a canvas corner)."""
+    els = [
+        {"id": "bg", "type": "shape", "shape_type": "rectangle", "x": 0, "y": 0, "width": 1080, "height": 1080,
+         "fill_color": "rgba(40,30,50,1)", "z_index": 0},
+        {"id": "card", "type": "image", "asset_id": "solstice_bottle.png", "fit": "contain",
+         "x": 340, "y": 200, "width": 400, "height": 400, "z_index": 1},
+        {"id": "title", "type": "text", "content": "Discover the summer collection", "font_family": "Solstice Serif",
+         "font_size": 56, "color": "rgba(255,255,255,1)", "text_align": "center",
+         "x": 90, "y": 660, "width": 900, "height": 150, "z_index": 2},
+        {"id": "rib_bg", "type": "shape", "shape_type": "rectangle", "fill_color": "rgba(220,60,50,1)",
+         "x": 560, "y": 220, "width": 240, "height": 50, "rotation": 20, "z_index": 3, "group_id": "rib"},
+        {"id": "rib_label", "type": "text", "content": "NEW", "font_family": "Solstice Sans", "font_size": 22,
+         "color": "rgba(255,255,255,1)", "text_align": "center", "font_weight": "bold",
+         "x": 560, "y": 230, "width": 240, "height": 30, "rotation": 20, "z_index": 4, "group_id": "rib"},
+    ]
+    return {"canvas": {"width": 1080, "height": 1080}, "elements": els}
+
+
+def _centre(el):
+    return el["x"] + el["width"] / 2, el["y"] + el["height"] / 2
+
+
+def test_attached_ribbon_travels_with_its_card():
+    from engine.analyze import analyze
+    src = _ribbon_on_card()
+    a = analyze(src)
+    assert a.units["rib"].host == "card"
+    for target in ({"width": 1600, "height": 400}, {"width": 600, "height": 1200}):
+        out = resize(src, target)
+        assert check(src, target, out) == []
+        o = {e["id"]: e for e in out["elements"]}
+        card, rib = o["card"], _centre(o["rib_bg"])
+        fx, fy = (rib[0] - card["x"]) / card["width"], (rib[1] - card["y"]) / card["height"]
+        sx, sy = (680 - 340) / 400, (245 - 200) / 400
+        assert abs(fx - sx) < 0.2 and abs(fy - sy) < 0.2, (target, fx, fy)
+        assert o["rib_bg"]["rotation"] == 20 and o["rib_label"]["rotation"] == 20  # same side of its card: same tilt
+
+
+def test_rotation_mirrors_only_with_the_position():
+    from engine.analyze import analyze
+    from engine.fit import orient
+    task = json.loads((REPO / "input" / "chameleon_sample_level3_advanced.json").read_text())
+    a = analyze(task["source"])
+    u = a.units["ribbon"]
+    out = {i: copy.deepcopy(e) for i, e in a.els.items()}
+    orient(out, a, u, 1080, 1350)
+    assert out["ribbon_bg"]["rotation"] == -12  # still top-right: unchanged
+    for m in u.members:
+        out[m]["x"] = 1080 - out[m]["x"] - out[m]["width"]  # moved to top-left
+    orient(out, a, u, 1080, 1350)
+    assert out["ribbon_bg"]["rotation"] == 12 and out["ribbon_label"]["rotation"] == 12  # mirrored, nothing new
+    for m in u.members:
+        out[m]["y"] = 1350 - out[m]["y"] - out[m]["height"]  # and to the bottom: a half-turn, same angle again
+    orient(out, a, u, 1080, 1350)
+    assert out["ribbon_bg"]["rotation"] == -12
+
+
+def test_colour_emphasis_raises_importance():
+    from engine.analyze import analyze
+    task = json.loads((REPO / "input" / "chameleon_sample_level3_advanced.json").read_text())
+    u = analyze(task["source"]).units
+    assert u["badge1"].emphasis > 0 and u["badge2"].emphasis == 0
+    assert u["badge1"].importance > u["badge2"].importance

@@ -9,7 +9,12 @@
   top alignment). Never below the readable minimum unless nothing else fits.
 - Floating units (corner badges, stickers, demoted low-importance units) go into the
   largest free rectangle near where they sat in the source, so they never overlap
-  anything already placed.
+  anything already placed. One that stands out by colour is centred in its rectangle
+  instead of pushed towards a side. Attached units (a ribbon across a card) go last,
+  at the same relative spot on their host, scaled with it.
+- Rotated units keep their source angle, mirrored (negated) only when they ended up
+  on the mirrored side of their anchor on one axis, so the tilt still points the same
+  way relative to the design. No other angle is ever produced.
 - Decorations: rescaled around their relative source position and pulled fully inside.
 """
 
@@ -155,14 +160,21 @@ def realize(a, plan, tw, th):
     grid = Grid(tw, th, plan.margin)
     for b in placed:
         grid.mark(b)
-    for uid in sorted(plan.floating, key=lambda i: -a.units[i].importance):
+    # hosts first: attached units are placed relative to wherever their host ended up
+    for uid in sorted(plan.floating, key=lambda i: (a.units[i].host is not None, -a.units[i].importance)):
         u = a.units[uid]
-        place_floating(out, sizer, a, u, plan.k, grid, tw, th)
+        if u.host:
+            place_attached(out, sizer, a, u, tw, th)
+        else:
+            place_floating(out, sizer, a, u, plan.k, grid, tw, th)
         for m in u.members:
             grid.mark(element_box(out[m]))
 
     for d in a.decorations:
         place_decoration(out, sizer, a, d, tw, th)
+    for u in [*a.units.values(), *a.decorations]:
+        if u.rotated:
+            orient(out, a, u, tw, th)
 
     return {"canvas": {"width": tw, "height": th}, "elements": [out[e["id"]] for e in a.source["elements"]]}
 
@@ -241,7 +253,9 @@ def place_floating(out, sizer, a, u, k, grid, tw, th):
             x, y = _clamp(ax - ext.w / 2, 0, tw - ext.w), _clamp(ay - ext.h / 2, 0, th - ext.h)
         else:
             _v, r, ext = best
-            x, y = _clamp(ax - ext.w / 2, r[0], r[2] - ext.w), _clamp(ay - ext.h / 2, r[1], r[3] - ext.h)
+            # stand-out colour: centre of its zone, not pushed aside (corner-pinned units keep their corner)
+            fx = (r[0] + r[2]) / 2 if u.emphasis and u.corner is None and not u.rotated else ax
+            x, y = _clamp(fx - ext.w / 2, r[0], r[2] - ext.w), _clamp(ay - ext.h / 2, r[1], r[3] - ext.h)
         out[eid].update(x=x, y=y, width=ext.w, height=max(ext.h, min(ext.h + ext.slack, th - y)))
         sizer.set_font(out[eid], ext.fs)
         return
@@ -259,7 +273,42 @@ def place_floating(out, sizer, a, u, k, grid, tw, th):
     else:
         _v, r, s = best
     w, h = u.w * s, u.h * s
-    place_rigid(out, sizer, a, u, s, _clamp(ax - w / 2, r[0], r[2] - w), _clamp(ay - h / 2, r[1], r[3] - h))
+    fx = (r[0] + r[2]) / 2 if u.emphasis and u.corner is None and not u.rotated else ax  # see the text branch
+    place_rigid(out, sizer, a, u, s, _clamp(fx - w / 2, r[0], r[2] - w), _clamp(ay - h / 2, r[1], r[3] - h))
+
+
+def place_attached(out, sizer, a, u, tw, th):
+    """Same relative spot on the host, scaled like the host (never below readable, never off-canvas)."""
+    host = a.units[u.host]
+    hb = _union_boxes([element_box(out[m]) for m in host.members])
+    s = (hb[2] - hb[0]) / max(host.drawn[2] - host.drawn[0], 1e-6)
+    s = min(max(s, sizer.floor_scale(u)), tw / max(u.w, 1e-6), th / max(u.h, 1e-6))
+    cx, cy = hb[0] + u.rel[0] * (hb[2] - hb[0]), hb[1] + u.rel[1] * (hb[3] - hb[1])
+    # u.rel is about the drawn centre; place_rigid positions the full box
+    dx = ((u.drawn[0] + u.drawn[2]) / 2 - u.box[0]) * s
+    dy = ((u.drawn[1] + u.drawn[3]) / 2 - u.box[1]) * s
+    w, h = u.w * s, u.h * s
+    place_rigid(out, sizer, a, u, s, _clamp(cx - dx, 0, tw - w), _clamp(cy - dy, 0, th - h))
+
+
+def orient(out, a, u, tw, th):
+    """Source angle, negated when u sits on the mirrored side of its anchor on exactly one axis.
+    Only for units whose rotated members share one centre: mirroring an off-centre member's
+    angle without mirroring its offset would tear the unit apart."""
+    from engine.analyze import side_of
+    rot = [m for m in u.members if a.els[m].get("rotation", 0)]
+    centres = [(a.els[m]["x"] + a.els[m]["width"] / 2, a.els[m]["y"] + a.els[m]["height"] / 2) for m in rot]
+    if max(math.dist(centres[0], c) for c in centres) > 0.02 * max(u.w, u.h):
+        return
+    anchor = _union_boxes([element_box(out[m]) for m in a.units[u.host].members]) if u.host else (0, 0, tw, th)
+    now = side_of(_union_boxes([element_box(out[m]) for m in u.members]), anchor)
+    flip = u.side[0] * now[0] * u.side[1] * now[1]
+    for m in rot:
+        out[m]["rotation"] = a.els[m]["rotation"] * flip
+
+
+def _union_boxes(boxes):
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
 def place_decoration(out, sizer, a, d, tw, th):

@@ -151,3 +151,50 @@ def test_contrast_the_source_already_had_is_not_penalised():
     worse = copy.deepcopy(src)
     el(worse, "cta")["color"] = "rgba(55,35,50,1)"
     assert score(src, src["canvas"], worse, contrast=True)["breakdown"]["contrast"]["penalty"] > 0
+
+
+def test_emphasis_is_saturated_and_off_palette():
+    from eval.score import emphasis
+    sal = emphasis(load("level2_core")["source"])
+    assert {"cta_bg", "badge_bg"} <= set(sal)  # orange on a dark plum palette
+    assert not {"headline", "subhead", "cta_label", "bg"} & set(sal)  # white text is contrast, not colour emphasis
+
+
+def test_emphasised_unit_off_focus_is_penalised():
+    def strand(o):  # the orange CTA pushed to the left edge, no longer last in the reading path
+        for i in ("cta_bg", "cta_label"):
+            el(o, i)["x"] -= 320
+            el(o, i)["y"] -= 200
+    assert _mutated(lambda o: None)["emphasis"]["penalty"] == 0
+    assert _mutated(strand)["emphasis"]["penalty"] > 0.5
+
+
+def test_attached_unit_must_stay_on_its_host_and_tilt_the_right_way():
+    src = copy.deepcopy(load("level3_advanced")["source"])
+    for i in ("ribbon_bg", "ribbon_label"):  # put the ribbon across the bottle's top-right corner
+        el(src, i)["x"] += 400 - 740
+        el(src, i)["y"] += 170 - 30
+    def floating(mutate):
+        out = copy.deepcopy(src)
+        mutate(out)
+        return score(src, src["canvas"], out)["breakdown"]["floating"]
+    def move(dx, dy, mirror=False):
+        def f(o):
+            for i in ("ribbon_bg", "ribbon_label"):
+                el(o, i)["x"] += dx
+                el(o, i)["y"] += dy
+                if mirror:
+                    el(o, i)["rotation"] *= -1
+        return f
+    def with_bottle(f):
+        def g(o):
+            for i in ("product",):
+                el(o, i)["x"] -= 300
+            f(o)
+        return g
+    assert floating(lambda o: None)["penalty"] == 0
+    assert floating(with_bottle(move(-300, 0)))["penalty"] == 0  # moved together with the bottle
+    assert floating(move(0, 600))["penalty"] >= 0.5  # left the bottle behind (mean with the watermark, which stayed)
+    left = floating(move(-250, 0))                                 # now on the bottle's left side, same tilt
+    assert "tilts the wrong way" in left["detail"]
+    assert "tilts" not in floating(move(-250, 0, mirror=True))["detail"]

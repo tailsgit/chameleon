@@ -3,10 +3,10 @@
     python -m eval.calibrate          # agreement of the recorded scores and of the current scorer
     python -m eval.calibrate --fit    # also fit the weights to the labels (paste them into PENALTIES)
 
-Labels (eval/results/labels.json, Good / Okay / Bad) were given to the engine
-outputs frozen in eval/calibration/outputs/, so the scorer can change without
-the labels going stale. Only labels given on that engine commit (outputs/ENGINE) are
-used; verdicts given later, on newer outputs, need those outputs frozen too. Agreement metrics:
+Every label in eval/results/labels.json, current or in a case's history, carries
+the exact output JSON it was given on, so labels from every engine version are
+used, and the scorer can change without them going stale. A case labelled on
+two different outputs counts twice. Agreement metrics:
   pairwise  - of all case pairs with different labels, the share the score orders
               the same way (ties count half); 0.5 = chance, 1 = perfect
   tau_b     - Kendall's tau-b between score and label (-1..1)
@@ -27,22 +27,25 @@ from eval.score import PENALTIES, score
 
 REPO = Path(__file__).resolve().parents[1]
 LABELS = REPO / "eval" / "results" / "labels.json"
-OUTPUTS = REPO / "eval" / "calibration" / "outputs"
 RANK = {"bad": 0, "okay": 1, "good": 2}
 
 
 def load():
-    engine = (OUTPUTS / "ENGINE").read_text().strip()
-    labels = {k: v for k, v in json.loads(LABELS.read_text()).items() if v.get("engine") == engine}
     sources = {p.stem.replace("chameleon_sample_", ""): json.loads(p.read_text())["source"]
                for p in (REPO / "input").glob("chameleon_sample_*.json")}
+    latest = {}  # (case, output) -> label; the latest verdict on the same output wins
+    for case, entry in json.loads(LABELS.read_text()).items():
+        for lab in [*entry.get("history", []), entry]:
+            if lab.get("verdict") and lab.get("output"):
+                key = (case, json.dumps(lab["output"], sort_keys=True))
+                if key not in latest or lab.get("at", "") >= latest[key].get("at", ""):
+                    latest[key] = lab
     cases = []
-    for case, lab in sorted(labels.items()):
-        out = json.loads((OUTPUTS / f"{case}.json").read_text())
-        sample = case.split("__")[0]
+    for (case, _o), lab in sorted(latest.items()):
+        sample, out = case.split("__")[0], lab["output"]
         b = score(sources[sample], out["canvas"], out, contrast=True)["breakdown"]
         cases.append({"case": case, "sample": sample, "label": RANK[lab["verdict"]], "recorded": lab["score"],
-                      "p": np.array([b[k]["penalty"] for k in PENALTIES])})
+                      "engine": lab.get("engine"), "p": np.array([b[k]["penalty"] for k in PENALTIES])})
     return cases
 
 

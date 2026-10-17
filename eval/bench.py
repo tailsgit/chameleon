@@ -4,7 +4,8 @@
     python -m eval.bench --render     # also render each case + a contact sheet
     python -m eval.bench --contrast   # also the render-based contrast penalty
 
-Writes eval/results/summary.md, eval/results/cases.csv and, with --render,
+Writes eval/results/summary.md, eval/results/cases.csv, each output as
+eval/results/outputs/<case>.json (the review server snapshots it into a label) and, with --render,
 eval/results/renders/*.png (each case, plus source__<sample>.png and the starter's
 naive stretch as stretch__<case>.png, for the review page) + eval/results/contact_sheet.png.
 """
@@ -40,6 +41,7 @@ def slug(s):
 def run(render=False, contrast=False, out_dir=REPO / "eval" / "results"):
     commit = _commit()  # before writing results, which would make the tree look dirty
     out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "outputs").mkdir(exist_ok=True)
     formats = json.loads(CATALOGUE.read_text())
     tasks = [(p.stem.replace("chameleon_sample_", ""), json.loads(p.read_text())) for p in SAMPLES]
     if render:
@@ -65,6 +67,7 @@ def run(render=False, contrast=False, out_dir=REPO / "eval" / "results"):
                 rows.append(row)
                 continue
 
+            (out_dir / "outputs" / f"{case}.json").write_text(json.dumps(output, indent=1))
             t = time.perf_counter()
             v = check(task["source"], target, output)
             row["check_ms"] = (time.perf_counter() - t) * 1000

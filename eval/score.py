@@ -42,6 +42,16 @@ HEADLINE_LEAD = 1.4          # the headline should look at least this much bigge
 FLOAT_MAX_AREA = 0.1         # a corner-anchored unit smaller than this fraction of the canvas is floating
 FLOAT_CORNER = 0.12          # "anchored" = within this fraction of the canvas side from two adjacent edges
 FLOAT_DRIFT_FULL = 0.3       # drift from its corner of 30% of the canvas side = full penalty
+ATTACH_MIN = 0.15            # a floating unit overlapping a bigger unit by this share of its area is attached to it
+TILT_FLIP = 0.5              # a rotated unit whose tilt no longer points the way it did, relative to its anchor
+ACCENT_MIN_CHROMA = 30       # CIELAB chroma: neutrals (white, black, greys) never count as colour emphasis
+ACCENT_MIN_DELTA = 35        # CIELAB distance from every main-palette colour
+MAIN_SHARE = 0.2             # a colour covering this share of the painted area is part of the main palette
+SAME_COLOUR = 15             # CIELAB distance under which two colours are one palette entry
+FOCUS_OFF_ZONE = 0.25        # emphasised unit's centre this far from its column's centre (x column width) = full penalty
+ROW_GAP = 0.1                # side-by-side units closer than this (x canvas width) form one row block
+FOCUS_OFF_CANVAS = 0.35      # ...or, alone in its column, this far from the canvas centre (x canvas width)
+FOCUS_FREE = 0.05            # off-centre by less than this is centred
 GAP_FREE, GAP_FULL = 0.1, 0.3  # an empty band between content: free up to 10% of the side, full penalty at 30%
 BALANCE_FULL = 0.25          # content centre this much further off-centre than in the source = full penalty
 NEAR_MISS_REL = 0.02         # edges closer than 2% of the canvas side, but not aligned, are a near miss
@@ -62,6 +72,7 @@ class Ctx:
     sh: float
     tw: float
     th: float
+    anchors: dict = None  # tuple(unit) -> None | ("corner", "top-left"...) | ("host", host unit)
 
 
 # --- penalties ---------------------------------------------------------------
@@ -156,22 +167,74 @@ def balance_penalty(c: Ctx):
 
 def floating_penalty(c: Ctx):
     """Floating elements (badges, ribbons, stamps) belong where they were
-    anchored. A unit is floating when it is small (< FLOAT_MAX_AREA of the
-    source canvas) and either rotated or sits within FLOAT_CORNER of two
-    adjacent source edges. Its drift = change in its gaps to that corner's two
-    edges, as fractions of the canvas sides; penalty = mean drift / FLOAT_DRIFT_FULL."""
-    drifts, moved = [], []
+    anchored (see _float_anchor): either to another unit they partly cover (a
+    ribbon across a card) or to a canvas corner.
+    - Attached: drift = change of its centre's position inside the host's box,
+      as fractions of the host's sides.
+    - Corner: drift = change in its gaps to that corner's two edges, as
+      fractions of the canvas sides.
+    Per unit: drift / FLOAT_DRIFT_FULL, plus TILT_FLIP when a rotated unit's
+    tilt no longer points the way it did relative to its anchor (it moved to
+    the mirrored side without its angle being mirrored, or the reverse).
+    Penalty = mean over floating units, each capped at 1."""
+    pens, notes = [], []
     for u in c.units:
-        corner = _float_corner(c, u)
-        if corner is None:
+        anchor = c.anchors[tuple(u)]
+        if anchor is None:
             continue
-        gs = _corner_gaps(_unit_box(c.src_box, u), corner, c.sw, c.sh)
-        go = _corner_gaps(_unit_box(c.out_box, u), corner, c.tw, c.th)
+        kind, ref = anchor
+        if kind == "host":
+            gs, go = _rel_pos(c.src_box, u, ref), _rel_pos(c.out_box, u, ref)
+            where = f"its place on {_name(ref)}"
+        else:
+            gs = _corner_gaps(_unit_box(c.src_box, u), ref, c.sw, c.sh)
+            go = _corner_gaps(_unit_box(c.out_box, u), ref, c.tw, c.th)
+            where = ref
         d = abs(go[0] - gs[0]) + abs(go[1] - gs[1])
-        drifts.append(min(1.0, d / FLOAT_DRIFT_FULL))
+        p = d / FLOAT_DRIFT_FULL
         if d > 0.05:
-            moved.append(f"{_name(u)} drifted {d:.0%} from {corner}")
-    return (sum(drifts) / len(drifts) if drifts else 0.0), ", ".join(moved)
+            notes.append(f"{_name(u)} drifted {d:.0%} from {where}")
+        if _tilt_wrong(c, u, anchor):
+            p += TILT_FLIP
+            notes.append(f"{_name(u)} tilts the wrong way")
+        pens.append(min(1.0, p))
+    return (sum(pens) / len(pens) if pens else 0.0), ", ".join(notes)
+
+
+def emphasis_penalty(c: Ctx):
+    """Units that stand out by colour (see `emphasis`) belong in a focal
+    position: the end of the reading path (last in row or column order), or
+    the centre of their column (the units stacked above or below them). A
+    row of side-by-side units (a row of badges) is judged as one block. Alone
+    in its column, a unit is judged against the canvas centre instead.
+    Floating units are judged by floating_penalty. Penalty = off-focus amount,
+    averaged with each unit's emphasis strength as weight."""
+    sal = emphasis(c.source)
+    units = [u for u in c.units if c.anchors[tuple(u)] is None]
+    if not units:
+        return 0.0, ""
+    last = {tuple(_reading_order(c.out_box, units)[-1]), tuple(_reading_order(c.out_box, units, columns=True)[-1])}
+    boxes = {tuple(u): _unit_box(c.out_box, u) for u in units}
+    num = den = 0.0
+    off = []
+    for u in units:
+        w = max(sal.get(i, 0.0) for i in u)
+        if w == 0 or tuple(u) in last:
+            continue
+        row = _row_block(boxes, tuple(u), ROW_GAP * c.tw)
+        b = _content_box(boxes, [[k] for k in row])
+        cx = (b[0] + b[2]) / 2
+        col = [boxes[k] for k in boxes if k not in row and min(b[2], boxes[k][2]) > max(b[0], boxes[k][0])]
+        if col:
+            z = _content_box({0: b, **{k + 1: v for k, v in enumerate(col)}}, [[k] for k in range(len(col) + 1)])
+            rel, full = abs(cx - (z[0] + z[2]) / 2) / max(z[2] - z[0], 1e-6), FOCUS_OFF_ZONE
+        else:
+            rel, full = abs(cx - c.tw / 2) / c.tw, FOCUS_OFF_CANVAS
+        p = min(1.0, max(0.0, rel - FOCUS_FREE) / (full - FOCUS_FREE))
+        num, den = num + w * p, den + w
+        if p > 0.2:
+            off.append(f"{_name(u)} off-focus {p:.2f}")
+    return (num / den if den else 0.0), ", ".join(off)
 
 
 def alignment_penalty(c: Ctx):
@@ -202,7 +265,7 @@ def reading_order_penalty(c: Ctx):
     down each column is not punished. Floating units are judged by
     floating_penalty instead. Penalty = fraction of unit pairs whose order
     flipped vs the source (Kendall), under the better of the two readings."""
-    units = [u for u in c.units if _float_corner(c, u) is None]
+    units = [u for u in c.units if c.anchors[tuple(u)] is None]
     src_rank = {tuple(u): i for i, u in enumerate(_reading_order(c.src_box, units))}
     best = None
     for order in (_reading_order(c.out_box, units), _reading_order(c.out_box, units, columns=True)):
@@ -272,6 +335,7 @@ PENALTIES = {  # name: (function, weight, needs_render). Weights fitted to the h
     "space": (space_penalty, 2.6, False),
     "balance": (balance_penalty, 1.5, False),
     "floating": (floating_penalty, 1.2, False),
+    "emphasis": (emphasis_penalty, 1.0, False),  # fit leaves it at the floor (labels predate it); kept by request
     "alignment": (alignment_penalty, 0.5, False),
     "reading_order": (reading_order_penalty, 0.5, False),
     "contrast": (contrast_penalty, 0.5, True),
@@ -305,9 +369,11 @@ def _context(source, target_canvas, output):
     for i in fg:
         groups.setdefault(src[i].get("group_id") or ("__" + i), []).append(i)
     units = list(groups.values())
-    return Ctx(source, output, src, out, {i: _drawn_box(src[i]) for u in units for i in u},
-               {i: _drawn_box(out[i]) for u in units for i in u}, units, sw, sh,
-               target_canvas["width"], target_canvas["height"])
+    c = Ctx(source, output, src, out, {i: _drawn_box(src[i]) for u in units for i in u},
+            {i: _drawn_box(out[i]) for u in units for i in u}, units, sw, sh,
+            target_canvas["width"], target_canvas["height"])
+    c.anchors = {tuple(u): _float_anchor(c, u) for u in units}
+    return c
 
 
 def _is_background(el, cw, ch):
@@ -429,20 +495,158 @@ def _content_box(boxes_by_id, units):
     return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
-def _float_corner(c, unit):
-    """'top-left' etc. if the unit floats in the source (see floating_penalty), else None."""
+def _float_anchor(c, unit):
+    """What a floating unit is pinned to in the source, or None if it isn't floating.
+    Small units only (< FLOAT_MAX_AREA of the canvas). Attached: it covers
+    ATTACH_MIN..90% of a bigger unit (more is plain layering) or covers any of
+    it while rotated -> ("host", that unit). Otherwise rotated, or within
+    FLOAT_CORNER of two adjacent edges -> ("corner", "top-left" etc.)."""
     b = _unit_box(c.src_box, unit)
     if _area(b) >= FLOAT_MAX_AREA * c.sw * c.sh:
         return None
+    rotated = any(c.src[i].get("rotation", 0) for i in unit)
+    best, share = None, 0.0
+    for v in c.units:
+        vb = _unit_box(c.src_box, v)
+        if v is unit or _area(vb) <= _area(b):
+            continue
+        r = _area((max(b[0], vb[0]), max(b[1], vb[1]), min(b[2], vb[2]), min(b[3], vb[3]))) / max(_area(b), 1e-9)
+        if r > share:
+            best, share = v, r
+    if best is not None and share >= ATTACH_MIN and (share < 0.9 or rotated):
+        return ("host", best)
     left, right = b[0] <= FLOAT_CORNER * c.sw, b[2] >= (1 - FLOAT_CORNER) * c.sw
     top, bottom = b[1] <= FLOAT_CORNER * c.sh, b[3] >= (1 - FLOAT_CORNER) * c.sh
-    rotated = any(c.src[i].get("rotation", 0) for i in unit)
     if left == right or top == bottom:  # spans the canvas, or not at an edge: only a rotated unit floats
         if not rotated:
             return None
         cx, cy = (b[0] + b[2]) / 2 / c.sw, (b[1] + b[3]) / 2 / c.sh
         left, top = cx < 0.5, cy < 0.5
-    return ("top" if top else "bottom") + "-" + ("left" if left else "right")
+    return ("corner", ("top" if top else "bottom") + "-" + ("left" if left else "right"))
+
+
+def _row_block(boxes, key, max_gap):
+    """`key` plus every unit reachable through side-by-side neighbours: vertical
+    centre inside the other's span, not overlapping horizontally, gap under max_gap."""
+    block, todo = {key}, [key]
+    while todo:
+        a = boxes[todo.pop()]
+        for k, b in boxes.items():
+            if k in block:
+                continue
+            same_row = a[1] <= (b[1] + b[3]) / 2 <= a[3] or b[1] <= (a[1] + a[3]) / 2 <= b[3]
+            gap = max(a[0], b[0]) - min(a[2], b[2])  # negative = they overlap horizontally: stacked, not side by side
+            if same_row and -ALIGNED_PX <= gap < max_gap:
+                block.add(k)
+                todo.append(k)
+    return block
+
+
+def _rel_pos(boxes, unit, host):
+    """Centre of `unit` as a fraction of `host`'s box."""
+    b, h = _unit_box(boxes, unit), _unit_box(boxes, host)
+    return (((b[0] + b[2]) / 2 - h[0]) / max(h[2] - h[0], 1e-6), ((b[1] + b[3]) / 2 - h[1]) / max(h[3] - h[1], 1e-6))
+
+
+def _side(b, ref):
+    """Which side of the point `ref` the centre of box b is on: (+-1, +-1)."""
+    return (1 if (b[0] + b[2]) / 2 >= ref[0] else -1, 1 if (b[1] + b[3]) / 2 >= ref[1] else -1)
+
+
+def _tilt_wrong(c, unit, anchor):
+    """A rotated unit should keep its source angle, negated exactly when it moved to the
+    mirrored side of its anchor on one axis (mirroring on both is a half-turn: same angle)."""
+    rot = [i for i in unit if c.src[i].get("rotation", 0)]
+    if not rot:
+        return False
+    def centre(boxes, w, h):
+        if anchor[0] == "host":
+            hb = _unit_box(boxes, anchor[1])
+            return ((hb[0] + hb[2]) / 2, (hb[1] + hb[3]) / 2)
+        return (w / 2, h / 2)
+    ss = _side(_unit_box(c.src_box, unit), centre(c.src_box, c.sw, c.sh))
+    so = _side(_unit_box(c.out_box, unit), centre(c.out_box, c.tw, c.th))
+    flip = ss[0] * so[0] * ss[1] * so[1]
+    i = rot[0]
+    return math.copysign(1, c.out[i].get("rotation", 0) or 0.0) != math.copysign(1, c.src[i]["rotation"]) * flip
+
+
+@lru_cache(maxsize=32)
+def _emphasis_cached(source_json):
+    source = json.loads(source_json)
+    cw, ch = source["canvas"]["width"], source["canvas"]["height"]
+    painted = []  # (lab colour, area)
+    own = {}      # element id -> lab colour
+    for el in source["elements"]:
+        b = _drawn_box(el)
+        area = _area((max(b[0], 0), max(b[1], 0), min(b[2], cw), min(b[3], ch)))
+        if el["type"] == "image":
+            rgb = _asset_mean_rgb(el.get("asset_id"))
+            if rgb is not None:
+                painted.append((_lab(rgb), area))
+            continue
+        r, g, bl, a = parse_rgba(el.get("color") if el["type"] == "text" else el.get("fill_color"))
+        a *= el.get("opacity", 1)
+        if a < DECORATION_ALPHA:
+            continue
+        lab = _lab((r, g, bl))
+        own[el["id"]] = lab
+        painted.append((lab, area * (0.3 if el["type"] == "text" else 1.0) * a))  # text: roughly its ink
+    palette = []  # [lab, area], greedy clusters
+    for lab, area in sorted(painted, key=lambda t: -t[1]):
+        hit = next((p for p in palette if _delta(p[0], lab) < SAME_COLOUR), None)
+        if hit:
+            hit[1] += area
+        else:
+            palette.append([lab, area])
+    total = sum(p[1] for p in palette) or 1.0
+    main = [p[0] for p in palette if p[1] / total >= MAIN_SHARE]
+    out = {}
+    for i, lab in own.items():
+        chroma = math.hypot(lab[1], lab[2])
+        share = sum(p[1] for p in palette if _delta(p[0], lab) < SAME_COLOUR) / total
+        d = min((_delta(lab, m) for m in main), default=0.0)
+        if chroma >= ACCENT_MIN_CHROMA and d >= ACCENT_MIN_DELTA and share < MAIN_SHARE:
+            out[i] = round(min(1.0, d / 70), 3)
+    return out
+
+
+def emphasis(source):
+    """{element id: 0..1} for elements whose own colour (text colour, shape fill)
+    stands out from the design's main palette: saturated (CIELAB chroma >=
+    ACCENT_MIN_CHROMA), at least ACCENT_MIN_DELTA from every colour that covers
+    MAIN_SHARE of the painted area, and not itself that common. Images count
+    towards the palette (by their mean colour) but are never emphasised by colour.
+    Strength = distance from the nearest main colour / 70, capped at 1."""
+    return _emphasis_cached(json.dumps(source, sort_keys=True))
+
+
+@lru_cache(maxsize=64)
+def _asset_mean_rgb(asset_id):
+    try:
+        with Image.open(ASSETS_DIR / asset_id) as im:
+            im = im.convert("RGBA").resize((32, 32))
+            px = np.asarray(im, dtype=np.float64)
+    except (OSError, TypeError, ValueError):
+        return None
+    a = px[..., 3:] / 255
+    if a.sum() == 0:
+        return None
+    return tuple(float(v) for v in (px[..., :3] * a).sum((0, 1)) / a.sum())
+
+
+def _lab(rgb):
+    """sRGB 0..255 -> CIELAB (D65)."""
+    c = np.asarray(rgb, dtype=np.float64) / 255
+    c = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    x, y, z = (np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]]) @ c
+               / np.array([0.95047, 1.0, 1.08883]))
+    f = lambda t: t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+    return (116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z)))
+
+
+def _delta(a, b):
+    return math.dist(a, b)
 
 
 def _corner_gaps(b, corner, w, h):

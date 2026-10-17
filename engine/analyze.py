@@ -16,7 +16,13 @@ knowledge of particular designs or ids. Steps:
    re-anchored afterwards.
 4. Roles, each with a confidence (rules in `_assign_roles`):
    headline / subhead / body / fineprint / cta / logo / hero / badge / decoration.
-5. Importance = role base x (0.8 + 0.2 x confidence) + up to 0.1 for relative area.
+5. Importance = role base x (0.8 + 0.2 x confidence) + up to 0.1 for relative area,
+   + up to EMPHASIS_BOOST for a unit whose colour stands out from the palette
+   (eval.score.emphasis: saturated and far from the main colours).
+   Floating units that partly cover a bigger unit (a ribbon across a card) are
+   attached to it: `host` and their centre's position inside it (`rel`).
+   Every unit records which side of its anchor (host centre, else canvas centre)
+   it sits on (`side`), so a rotated unit moved to the mirrored side can mirror its tilt.
 6. Relationships: containment pairs, shared alignment edges/centres, canvas-edge
    anchoring, reading-order rows and size order.
 """
@@ -26,6 +32,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from eval.check import rotated_bbox, text_layout
+from eval.score import ATTACH_MIN, emphasis
 from renderer.converter.colorutil import parse_rgba
 
 ACTION_WORDS = {
@@ -40,6 +47,7 @@ FILL_TOLERANCE = 0.01
 EDGE_ZONE = 0.12        # a box edge within 12% of a canvas side counts as anchored to it
 CONTAINER_MAX_AREA = 0.25
 DECORATION_ALPHA = 0.5  # same threshold as eval.score
+EMPHASIS_BOOST = 0.15
 
 
 @dataclass
@@ -55,6 +63,10 @@ class Unit:
     edges: tuple = ()        # subset of ("left", "right", "top", "bottom")
     floating: bool = False   # placed into leftover space after the main layout
     rotated: bool = False
+    emphasis: float = 0.0    # 0..1, colour stands out from the design's palette
+    host: str | None = None  # unit this floating unit is attached to
+    rel: tuple = ()          # its drawn centre as a fraction of the host's drawn box
+    side: tuple = (1, 1)     # side of its anchor it sits on (x, y), each +-1
 
     @property
     def w(self):
@@ -177,11 +189,17 @@ def analyze(source):
         d.role, d.confidence, d.importance = "decoration", 0.8, ROLE_BASE["decoration"]
 
     _assign_roles(units, els, sw, sh)
+    sal = emphasis(source)
     for u in units.values():
         area_bonus = 0.1 * min(1.0, 4 * _area(u.box) / (sw * sh))
-        u.importance = round(ROLE_BASE[u.role] * (0.8 + 0.2 * u.confidence) + area_bonus, 4)
+        u.emphasis = max(sal.get(m, 0.0) for m in u.members)
+        u.importance = round(ROLE_BASE[u.role] * (0.8 + 0.2 * u.confidence) + area_bonus + EMPHASIS_BOOST * u.emphasis, 4)
         # small badges pinned to a corner, rotated stickers and loose graphics are placed after the main layout
         u.floating = u.role in ("badge", "decoration") and (u.corner is not None or u.rotated) or u.role == "decoration"
+    _attach(units)
+    for u in [*units.values(), *decorations]:
+        h = units[u.host].drawn if u.host else (0, 0, sw, sh)
+        u.side = side_of(u.drawn, h)
 
     rows = reading_rows({uid: u.drawn for uid, u in units.items() if not u.floating})
     aligns = Counter()  # dominant text alignment, weighted by characters
@@ -200,6 +218,31 @@ def analyze(source):
             "size_order": sorted(units, key=lambda uid: -_area(units[uid].box)),
         },
     )
+
+
+def side_of(b, ref):
+    """Which side of box ref's centre the centre of box b is on: (+-1, +-1)."""
+    return (1 if b[0] + b[2] >= ref[0] + ref[2] else -1, 1 if b[1] + b[3] >= ref[1] + ref[3] else -1)
+
+
+def _attach(units):
+    """A badge or decoration that partly covers a bigger non-floating unit (ATTACH_MIN
+    to 90% of its area, or any share when rotated) travels with that unit."""
+    for u in units.values():
+        if u.role not in ("badge", "decoration"):
+            continue
+        best, share = None, 0.0
+        for v in units.values():
+            if v is u or v.floating or _area(v.drawn) <= _area(u.drawn):
+                continue
+            r = _inside(u.drawn, v.drawn)
+            if r > share:
+                best, share = v, r
+        if best is not None and share >= ATTACH_MIN and (share < 0.9 or u.rotated):
+            hb, b = best.drawn, u.drawn
+            u.floating, u.host = True, best.id
+            u.rel = (((b[0] + b[2]) / 2 - hb[0]) / max(hb[2] - hb[0], 1e-6),
+                     ((b[1] + b[3]) / 2 - hb[1]) / max(hb[3] - hb[1], 1e-6))
 
 
 def reading_rows(boxes):
