@@ -20,3 +20,7 @@ venv/
 # Generated run artifacts
 output/*
 !output/.gitkeep
+
+# Benchmark renders (regenerate with: python -m eval.bench --render)
+eval/results/renders/
+eval/results/contact_sheet.png

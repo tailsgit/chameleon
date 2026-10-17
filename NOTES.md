@@ -194,6 +194,13 @@ bleeds it to (-100,-100), and README:64-66 calls it "an expected one".
 - The PNG is capped at 2048 px on the long side (`max_size=2048`, convert.py:270),
   so larger targets get downscaled. Uncovered canvas is white.
 - Missing assets render as a grey "missing asset" placeholder and add a warning. They don't crash.
+- **Text is top-aligned in its box.** There's no vertical centring: line *i* starts at
+  `i * font_size * line_height` from the box top. A 15px label in a 26px box sits at
+  y≈5–16, so centring text in a pill means positioning the box itself.
+- Wrapping is measured at the float `font_size`, but glyphs are drawn at **`int(font_size)`**
+  (cr_renderer `make_text_blob`). A 20.9px font renders as 20px, so use whole-number sizes.
+- Wrapping ignores `letter_spacing`, but drawing applies it, so a spaced-out line can
+  overflow its box. `eval/check.py` measures with the renderer's own widths and catches this.
 
 ## 7. Open questions for the organisers
 
@@ -226,8 +233,10 @@ bleeds it to (-100,-100), and README:64-66 calls it "an expected one".
 12. Is the target-size catalogue published?
 13. Schema is v0.9 "provisional": when is it frozen?
 
-## 8. Crello dataset (`cyberagent/crello` on Hugging Face). Not downloaded yet
+## 8. Crello dataset (`cyberagent/crello` on Hugging Face)
 
+- **Downloaded so far**: only the 3 validation shards (1.43 GB, 1,852 designs), in
+  `/Volumes/Extreme/AdobeHackathon/data/crello/`, which is **outside the repo** on purpose.
 - **Size**: ~18.2 GB of parquet (`download_size` 18,207,073,052 bytes) in 37 shards
   (31 train / 3 val / 3 test), plus `resources/fonts.pickle` (60 MB). 19,479 train,
   1,852 val and 1,971 test designs. Not gated.
@@ -254,3 +263,90 @@ bleeds it to (-100,-100), and README:64-66 calls it "an expected one".
     (redistribution or extraction of elements). Prefer deriving geometry-only
     templates (normalised boxes, no pixels or text) and ask the organisers. This also
     ties into the "no regenerated pixels" rule: never paste Crello imagery into outputs.
+
+## 9. Docker timings (2026-10-17, Apple Silicon, linux/amd64 under emulation)
+
+| Step | Time | Notes |
+|---|---|---|
+| `docker build --platform linux/amd64` | **770 s** (~12.8 min) | Image is 1.24 GB. Cold cache: base image, apt, pip incl. skia |
+| `docker run --rm --network none …` | **228 s** (~3.8 min) | 3 samples. `resize()` itself takes ~0 s, so this is almost all emulated renderer start-up + rendering |
+| Native `python -m engine.main` | ~4 s | Same 3 samples |
+
+The JSON outputs were byte-identical to the native run. The PNGs differ by a few hundred
+bytes, most likely from anti-aliasing. Under emulation the run averaged ~76 s per sample (including
+start-up), against ~70 ms per render natively (see section 12).
+
+## 10. Baseline (uniform stretch) review
+
+The baseline scales x and width by `tw/sw`, y and height by `th/sh`, and font size by the smaller of the two.
+
+- **Level 1 (1080² → 1080×1350)**: looks almost fine, which hides the problems. Every
+  box is 20% taller than its proportions allow (logo `image_aspect` -20%; `contain` hides it
+  visually). Nothing is re-laid-out to use the extra height: the headline–CTA gap grows
+  to ~125 px and the bottom quarter is empty.
+- **Level 2 (1080² → 1600×400)**: every box is 4× too wide. The deco circles become flat
+  ovals, and the product box is 741×185, so the bottle is a small icon and the logo is tiny.
+  Fonts drop to 20/8/6/8 px (int-rendered), so the subhead and badge are unreadable. Everything
+  stays in one central column, leaving most of the banner empty. The subhead sits flush
+  against the CTA pill. (Earlier I said it overlaps it; the scorer measured the drawn text
+  and they only touch, and they nearly touch in the source too.)
+- **Level 3 (1080×1350 → 728×90)**: unusable. Fonts are 1–2 px. Badges and the CTA become thin
+  lines. The -12° ribbon becomes a 202×3.6 box that renders as a long red diagonal slash
+  poking out above the canvas (`off_canvas_rotated`). The missing-asset placeholder is
+  a grey strip.
+- In all three, the background is fine: `cover` centre-crops whatever box it gets.
+
+## 11. Assumptions (decided by the team, not confirmed by the organisers)
+
+1. **Backgrounds**: full canvas (`x=0, y=0, w=W, h=H`), `fit: "cover"`, and the renderer's
+   centre crop is accepted. `eval/check.py` enforces this (`background_not_full_canvas`).
+2. **Bleeds**: elements that bleed off-canvas in the source (L2 `deco_circle_1`, L3
+   ribbon's rotated corner) are pulled **fully inside** in our output. We check both the
+   unrotated box (`off_canvas`) and the rotated bounding box (`off_canvas_rotated`).
+3. **Crello is used only to learn from**: geometry and roles only, never pixels or text.
+   Nothing from Crello is committed to the repo or baked into the Docker image.
+4. **No model for now.** Any future model must be small (target well under 100M parameters).
+5. **Rendering is expensive**, because scoring may run under amd64 emulation. The engine ranks
+   most candidate layouts geometrically (`eval/score.py`, ~1 ms) and renders only the top few.
+6. "Source aspect ratio within ~5%" = the **source element box's** aspect, not the asset file's.
+
+## 12. Evaluation tooling (`eval/`)
+
+```bash
+pip install -r requirements-dev.txt     # pytest, jsonschema (dev only, not in Docker)
+python -m pytest                        # 58 tests, ~1 s
+python -m eval.bench                    # 3 samples x 15 formats: check + geometric score
+python -m eval.bench --render --contrast  # + PNG per case, contact sheet, contrast penalty
+```
+
+- `eval/check.py` (`check(source, target_canvas, output)`) returns the hard-rule violations listed in
+  its docstring. Text overflow is computed with the converter's own wrap and
+  cr-renderer's own line layout, and is tested against real renders: the ink bbox stays within 3 px of
+  the prediction across 24 cases, including fractional sizes, alignment, letter spacing,
+  bold runs and overflow.
+- `eval/score.py` (`score(...)`) gives 0–100 from weighted penalties: overlap, small_text,
+  headline, space, alignment, reading_order, plus optional contrast, which renders once. Each
+  penalty is a documented function with its weight in `PENALTIES`. All geometry uses
+  what is drawn (laid-out text lines, letterboxed `contain` images), not raw boxes.
+- `eval/bench.py` writes `eval/results/summary.md` + `cases.csv`. `--render` adds
+  `renders/` + `contact_sheet.png` (both gitignored).
+
+**Baseline floor (uniform stretch, 45 cases):** 1/45 cases pass every hard rule (the
+identity case: L1 → Instagram Post). Average score 87.06 with contrast, 86.69 without.
+Violations: `image_aspect` 84 (42 cases), `off_canvas_rotated` 20 (11), `off_canvas` 15 (15).
+Weakest formats: Leaderboard (64–72), Email Header, Wide Skyscraper, Facebook Cover.
+
+**Timings, native Apple Silicon:** render ≈ 70 ms/case (max 144 ms), check ≈ 1.1 ms,
+geometric score ≈ 1.4 ms (≈ 105 ms with contrast, because it renders).
+
+**Rules we can't turn into an automatic check:**
+- "No regenerated pixels": we can only check the proxies, i.e. `asset_id` and `fit` unchanged
+  and no invented elements. Writing new image files isn't visible in the JSON.
+- "Renders legibly" and faithfulness to the design's intent: these are judged by the AI evaluator
+  and its rubric. We only have proxies (small_text, overlap, contrast).
+- "Dishonest JSON": only the `hidden_element` proxy (size < 1 px or opacity 0).
+- Process rules: offline at run time, public LoRA weights, the reference-hardware
+  budget and the (unknown) size limit. These are covered by the Docker run, not by `check`.
+- Which aspect ratio counts (box or asset), and whether the off-canvas check uses rotated
+  bounds: these are open questions, and both are handled by our assumptions above.
+- Renderer quirks (text `opacity` ignored, inclusive `style_runs` end) aren't flagged.
