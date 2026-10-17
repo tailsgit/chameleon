@@ -425,3 +425,67 @@ already overflows its own box inside a group or rotated unit.
   between primaries only.
 - **Floating placement isn't judged.** Demoted units dropped into odd gaps (L3 leaderboard
   and email header) cost little, because `reading_order` and `alignment` barely see them.
+
+## 14. Scorer v2, calibrated against hand labels
+
+All 45 engine-v1 outputs were labelled by hand: 11 Good, 12 Okay, 22 Bad (`eval/results/labels.json`).
+The exact outputs that were labelled are frozen in `eval/calibration/outputs/`, so the scorer can keep
+changing without the labels going stale. `python -m eval.calibrate [--fit]` reports agreement and
+refits the weights. `eval/tests/test_calibration.py` fails if pairwise agreement drops below 0.85.
+
+### Agreement with the labels (45 cases)
+
+| scorer | pairwise, all | pairwise, within design | Kendall τ-b | AUC, good vs bad |
+|---|---|---|---|---|
+| v1 (the scores the labels were given against) | 0.730 | 0.698 | +0.37 | 0.82 |
+| v2, fitted weights | **0.892** | **0.891** | **+0.63** | **1.00** |
+| v2, weights fitted on 2 designs, tested on the 3rd | – | 0.885 | – | – |
+
+Pairwise means: of the case pairs with different labels, the share the score orders the same
+way (0.5 is chance). The leave-one-design-out row is the honest number, and it is close to
+the in-sample one. Most of the gain comes from the penalty fixes, not the weights: v2 with
+the old hand-set weights already reaches 0.887.
+
+### What changed (each fixes a §13 disagreement)
+- **space** is now judged against the target canvas, not the source:
+  - half: the content box should span at least 60% of each side;
+  - a quarter: the widest empty band through the content (the hole in a split layout), beyond 10%;
+  - a quarter: empty ninths beyond 4.
+- **balance** (new): the content centre sitting further off-centre than it did in the source.
+- **headline** is judged on visual size: the x-height of the drawn font × √(weight/400).
+  - The headline must lead every other text by min(1.4×, its lead in the source).
+- **contrast**: the bar is min(WCAG, the element's contrast in the source), so the source's
+  white-on-orange badges cost nothing. The source render is cached.
+- **reading_order**: the output may be read row by row or column by column, whichever matches
+  better. Floating units are left to `floating`.
+- **floating** (new): a small unit that is rotated or sits within 12% of two adjacent edges must
+  keep its gaps to that corner.
+- **alignment** also counts source alignments the layout lost (a row of badges broken up).
+  A row may become a column.
+
+### Fitted weights
+| penalty | weight |
+|---|---|
+| space | 2.6 |
+| small_text | 1.5 |
+| balance | 1.5 |
+| headline | 1.2 |
+| floating | 1.2 |
+| overlap, alignment, reading_order, contrast | 0.5 each |
+
+The weights sum to 10. Every weight is floored at 5% of the total: the labelled outputs barely
+vary on overlap and contrast (the engine already avoids both), so the fit would zero them,
+but they still have to guard the engine's choice between candidates.
+
+### Engine changes
+- **Same aspect** (within 2%): the uniform scale of the source is added as a preferred candidate.
+  It loses only to a candidate more than 2 points better. L3 → Instagram Portrait is now the
+  source layout (labelled Bad before).
+- Because the engine ranks candidates with this scorer, the new weights change 31 of 45 outputs.
+  Under the v2 scorer the average goes 90.2 (v1 outputs) → 94.4 (v2 outputs), still 45/45 passing.
+  By eye most changes are better:
+  - L1 wide formats are centred and larger;
+  - the L2 LinkedIn hole is gone;
+  - the L3 ribbon goes back to its corner.
+  L3 → Email Header and Leaderboard are still chaotic, and the L1 skyscraper logo is tiny.
+  **These v2 outputs are not labelled yet**: the agreement numbers above are for v1 outputs only.
