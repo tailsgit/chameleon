@@ -9,8 +9,9 @@
   top alignment). Never below the readable minimum unless nothing else fits.
 - Floating units (corner badges, stickers, demoted low-importance units) go into the
   largest free rectangle near where they sat in the source, so they never overlap
-  anything already placed. One that stands out by colour is centred in its rectangle
-  instead of pushed towards a side. Attached units (a ribbon across a card) go last,
+  anything already placed. With focal=True, one that stands out by colour is centred
+  in its rectangle instead of pushed towards its source side (resize() realises plans
+  both ways when that matters and lets the scorer choose). Attached units (a ribbon across a card) go last,
   at the same relative spot on their host, scaled with it.
 - Rotated units keep their source angle, mirrored (negated) only when they ended up
   on the mirrored side of their anchor on one axis, so the tilt still points the same
@@ -141,7 +142,7 @@ class Sizer:
         return Extent(u.w * s, u.h * s, scale=s)
 
 
-def realize(a, plan, tw, th):
+def realize(a, plan, tw, th, focal=True):
     """Build the output design for one plan."""
     sizer = plan.sizer
     out = {i: copy.deepcopy(e) for i, e in a.els.items()}
@@ -166,7 +167,7 @@ def realize(a, plan, tw, th):
         if u.host:
             place_attached(out, sizer, a, u, tw, th)
         else:
-            place_floating(out, sizer, a, u, plan.k, grid, tw, th)
+            place_floating(out, sizer, a, u, plan.k, grid, tw, th, focal)
         for m in u.members:
             grid.mark(element_box(out[m]))
 
@@ -219,7 +220,7 @@ def place_rigid(out, sizer, a, u, s, x, y):
             sizer.set_font(el, fs)
 
 
-def place_floating(out, sizer, a, u, k, grid, tw, th):
+def place_floating(out, sizer, a, u, k, grid, tw, th, focal=True):
     ax, ay = a.anchor(u)
     ax, ay = ax * tw, ay * th
     diag = math.hypot(tw, th)
@@ -254,7 +255,7 @@ def place_floating(out, sizer, a, u, k, grid, tw, th):
         else:
             _v, r, ext = best
             # stand-out colour: centre of its zone, not pushed aside (corner-pinned units keep their corner)
-            fx = (r[0] + r[2]) / 2 if u.emphasis and u.corner is None and not u.rotated else ax
+            fx = (r[0] + r[2]) / 2 if focal and u.emphasis and u.corner is None and not u.rotated else ax
             x, y = _clamp(fx - ext.w / 2, r[0], r[2] - ext.w), _clamp(ay - ext.h / 2, r[1], r[3] - ext.h)
         out[eid].update(x=x, y=y, width=ext.w, height=max(ext.h, min(ext.h + ext.slack, th - y)))
         sizer.set_font(out[eid], ext.fs)
@@ -273,7 +274,7 @@ def place_floating(out, sizer, a, u, k, grid, tw, th):
     else:
         _v, r, s = best
     w, h = u.w * s, u.h * s
-    fx = (r[0] + r[2]) / 2 if u.emphasis and u.corner is None and not u.rotated else ax  # see the text branch
+    fx = (r[0] + r[2]) / 2 if focal and u.emphasis and u.corner is None and not u.rotated else ax  # see the text branch
     place_rigid(out, sizer, a, u, s, _clamp(fx - w / 2, r[0], r[2] - w), _clamp(ay - h / 2, r[1], r[3] - h))
 
 
