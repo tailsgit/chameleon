@@ -232,6 +232,7 @@ bleeds it to (-100,-100), and README:64-66 calls it "an expected one".
 11. Reference hardware spec (cores/RAM/GPU) and whether arm64 images are accepted.
 12. Is the target-size catalogue published?
 13. Schema is v0.9 "provisional": when is it frozen?
+14. Is changing an element's `rotation` allowed? The rules don't forbid it. We only ever mirror the source angle (see §15).
 
 ## 8. Crello dataset (`cyberagent/crello` on Hugging Face)
 
@@ -429,7 +430,7 @@ already overflows its own box inside a group or rotated unit.
 ## 14. Scorer v2, calibrated against hand labels
 
 All 45 engine-v1 outputs were labelled by hand: 11 Good, 12 Okay, 22 Bad (`eval/results/labels.json`).
-The exact outputs that were labelled are frozen in `eval/calibration/outputs/`, so the scorer can keep
+Each label stores the exact output it was given on (see §15), so the scorer can keep
 changing without the labels going stale. `python -m eval.calibrate [--fit]` reports agreement and
 refits the weights. `eval/tests/test_calibration.py` fails if pairwise agreement drops below 0.85.
 
@@ -489,3 +490,68 @@ but they still have to guard the engine's choice between candidates.
   - the L3 ribbon goes back to its corner.
   L3 → Email Header and Leaderboard are still chaotic, and the L1 skyscraper logo is tiny.
   **These v2 outputs are not labelled yet**: the agreement numbers above are for v1 outputs only.
+
+## 15. Emphasis, attachments, tilt, label snapshots
+
+### Rotation may change (by omission)
+Neither the schema nor RULES.md forbids changing `rotation`. RULES.md lists the structural
+checks (ids, required fields, off-canvas, image proportions) and fixes content and font family.
+The schema describes rotation only as "Degrees, clockwise, about the element's center". Only
+`font_size` is explicitly named as changeable. We therefore treat rotation as allowed but use it
+minimally: the source angle, or its exact negation. This is added to the open questions (§7).
+
+### Colour emphasis (`eval.score.emphasis`, shared by the engine and the scorer)
+- An element's own colour (text colour or shape fill) is emphasised when it is saturated (CIELAB
+  chroma ≥ 30) and at least 35 ΔE from every main-palette colour.
+- Main palette = colour clusters covering ≥ 20% of the painted area. Images count towards the
+  palette by their mean colour but are never emphasised themselves.
+- White or black text is contrast, not emphasis.
+- On the samples this flags the orange CTA in L1–L3, the orange badges, and the red ribbon.
+  Badge 2 (dark) is not flagged.
+
+What uses it:
+- **Engine:** importance gets +0.15 × emphasis. A floating stand-out unit is centred in its free
+  rectangle. Plans with such units are realised both centred and anchored, and the scorer picks.
+  (Centring stand-out lines inside left-aligned columns was tried and dropped: it broke the
+  column's alignment.)
+- **Scorer, `emphasis` penalty:** a stand-out unit should be either at the end of the reading path,
+  or centred in its column (5% free, full penalty at 25% of the column width). A row of
+  side-by-side units counts as one block.
+  - Weight 1.0. The fit leaves it at the floor because the labels predate it, and agreement is the
+    same either way.
+
+### Attachments and tilt
+- A badge or decoration covering 15–90% of a bigger unit (any share, if rotated) is attached to it.
+  The engine places it last, at the same relative spot on the host and scaled with it. The scorer
+  measures drift inside the host box instead of from a canvas corner.
+- Rotated units keep their source angle. It is negated only when the unit ends up on the mirrored
+  side of its anchor on exactly one axis (anchor = host centre, else canvas centre). On both axes
+  that is a half-turn, so the angle stays the same. No other angle is ever produced.
+  - Only units whose rotated members share one centre are mirrored.
+  - The scorer adds 0.5 to the floating penalty when a tilt points the wrong way.
+- None of the three samples has an attached unit. A synthetic ribbon-on-card design in
+  `test_engine.py` covers it.
+
+### Label snapshots
+- `bench` writes each output to `eval/results/outputs/<case>.json` (not committed).
+- The review server stores that exact JSON inside the label, so calibration can use labels from
+  any engine version.
+- A verdict on a changed output moves the old one into the case's `history`.
+- The page marks verdicts given on an earlier output. Clicking the same button confirms the verdict
+  for the new output.
+- The 45 existing labels were migrated with their frozen outputs, and `eval/calibration/` is gone.
+
+### Effect (engine `9ca181f` vs `6203082`)
+Five cases changed, all in L3, and all still pass. Average score 94.77 (not comparable to before:
+there is a new penalty).
+- **Leaderboard:** much tidier. Text block left, CTA and badges at the right end.
+- **Email Header:** tidier. Badges in a top row, CTA at the right end.
+- **Facebook Cover and Medium Rectangle:** about the same.
+- **Presentation 16:9:** smaller content, slightly worse by eye, though it scores the same.
+
+Raising emphasised badges' importance makes the solver drop the dark badge first on tiny
+canvases, which splits the badge row. On Medium Rectangle and Facebook Cover the old layouts
+score 0.6–1.4 points higher than any layout the engine now produces. This is a known trade-off;
+the fix would be to drop row siblings together.
+
+Agreement with the labels held: pairwise 0.892, AUC 1.00 (unchanged).
