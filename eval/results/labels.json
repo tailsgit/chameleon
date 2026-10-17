@@ -1,0 +1,272 @@
+{
+  "level1_warmup__a4_poster__150_dpi": {
+    "at": "2026-10-17T22:18:25+00:00",
+    "engine": "1a2d7be",
+    "score": 99.87,
+    "verdict": "okay"
+  },
+  "level1_warmup__email_header": {
+    "at": "2026-10-17T22:18:28+00:00",
+    "engine": "1a2d7be",
+    "score": 98.11,
+    "verdict": "bad"
+  },
+  "level1_warmup__facebook_cover": {
+    "at": "2026-10-17T22:17:38+00:00",
+    "engine": "1a2d7be",
+    "score": 98.94,
+    "verdict": "bad"
+  },
+  "level1_warmup__facebook_post": {
+    "at": "2026-10-17T22:17:34+00:00",
+    "engine": "1a2d7be",
+    "score": 97.95,
+    "verdict": "bad"
+  },
+  "level1_warmup__instagram_portrait": {
+    "at": "2026-10-17T22:17:26+00:00",
+    "engine": "1a2d7be",
+    "score": 99.94,
+    "verdict": "okay"
+  },
+  "level1_warmup__instagram_post": {
+    "at": "2026-10-17T22:17:20+00:00",
+    "engine": "1a2d7be",
+    "score": 98.14,
+    "verdict": "good"
+  },
+  "level1_warmup__instagram_story": {
+    "at": "2026-10-17T22:17:31+00:00",
+    "engine": "1a2d7be",
+    "score": 99.96,
+    "verdict": "okay"
+  },
+  "level1_warmup__leaderboard": {
+    "at": "2026-10-17T22:17:59+00:00",
+    "engine": "1a2d7be",
+    "score": 97.02,
+    "verdict": "bad"
+  },
+  "level1_warmup__linkedin_banner": {
+    "at": "2026-10-17T22:17:39+00:00",
+    "engine": "1a2d7be",
+    "score": 99.36,
+    "verdict": "bad"
+  },
+  "level1_warmup__medium_rectangle": {
+    "at": "2026-10-17T22:18:13+00:00",
+    "engine": "1a2d7be",
+    "score": 99.71,
+    "verdict": "okay"
+  },
+  "level1_warmup__pinterest_pin": {
+    "at": "2026-10-17T22:17:57+00:00",
+    "engine": "1a2d7be",
+    "score": 99.91,
+    "verdict": "okay"
+  },
+  "level1_warmup__presentation_16_9": {
+    "at": "2026-10-17T22:18:26+00:00",
+    "engine": "1a2d7be",
+    "score": 99.72,
+    "verdict": "bad"
+  },
+  "level1_warmup__wide_skyscraper": {
+    "at": "2026-10-17T22:18:21+00:00",
+    "engine": "1a2d7be",
+    "score": 99.78,
+    "verdict": "bad"
+  },
+  "level1_warmup__x_post": {
+    "at": "2026-10-17T22:17:50+00:00",
+    "engine": "1a2d7be",
+    "score": 98.1,
+    "verdict": "good"
+  },
+  "level1_warmup__youtube_thumbnail": {
+    "at": "2026-10-17T22:17:46+00:00",
+    "engine": "1a2d7be",
+    "score": 98.1,
+    "verdict": "good"
+  },
+  "level2_core__a4_poster__150_dpi": {
+    "at": "2026-10-17T22:21:47+00:00",
+    "engine": "1a2d7be",
+    "score": 99.96,
+    "verdict": "good"
+  },
+  "level2_core__email_header": {
+    "at": "2026-10-17T22:22:06+00:00",
+    "engine": "1a2d7be",
+    "score": 93.77,
+    "verdict": "bad"
+  },
+  "level2_core__facebook_cover": {
+    "at": "2026-10-17T22:19:44+00:00",
+    "engine": "1a2d7be",
+    "score": 91.81,
+    "verdict": "bad"
+  },
+  "level2_core__facebook_post": {
+    "at": "2026-10-17T22:19:12+00:00",
+    "engine": "1a2d7be",
+    "score": 93.41,
+    "verdict": "good"
+  },
+  "level2_core__instagram_portrait": {
+    "at": "2026-10-17T22:18:56+00:00",
+    "engine": "1a2d7be",
+    "score": 99.81,
+    "verdict": "okay"
+  },
+  "level2_core__instagram_post": {
+    "at": "2026-10-17T22:18:31+00:00",
+    "engine": "1a2d7be",
+    "score": 99.8,
+    "verdict": "good"
+  },
+  "level2_core__instagram_story": {
+    "at": "2026-10-17T22:19:02+00:00",
+    "engine": "1a2d7be",
+    "score": 99.81,
+    "verdict": "good"
+  },
+  "level2_core__leaderboard": {
+    "at": "2026-10-17T22:21:38+00:00",
+    "engine": "1a2d7be",
+    "score": 92.17,
+    "verdict": "bad"
+  },
+  "level2_core__linkedin_banner": {
+    "at": "2026-10-17T22:19:58+00:00",
+    "engine": "1a2d7be",
+    "score": 94.02,
+    "verdict": "bad"
+  },
+  "level2_core__medium_rectangle": {
+    "at": "2026-10-17T22:21:40+00:00",
+    "engine": "1a2d7be",
+    "score": 92.92,
+    "verdict": "bad"
+  },
+  "level2_core__pinterest_pin": {
+    "at": "2026-10-17T22:21:36+00:00",
+    "engine": "1a2d7be",
+    "score": 99.82,
+    "verdict": "good"
+  },
+  "level2_core__presentation_16_9": {
+    "at": "2026-10-17T22:22:03+00:00",
+    "engine": "1a2d7be",
+    "score": 98.55,
+    "verdict": "good"
+  },
+  "level2_core__wide_skyscraper": {
+    "at": "2026-10-17T22:21:45+00:00",
+    "engine": "1a2d7be",
+    "score": 93.96,
+    "verdict": "bad"
+  },
+  "level2_core__x_post": {
+    "at": "2026-10-17T22:20:14+00:00",
+    "engine": "1a2d7be",
+    "score": 98.56,
+    "verdict": "good"
+  },
+  "level2_core__youtube_thumbnail": {
+    "at": "2026-10-17T22:19:59+00:00",
+    "engine": "1a2d7be",
+    "score": 97.13,
+    "verdict": "good"
+  },
+  "level3_advanced__a4_poster__150_dpi": {
+    "at": "2026-10-17T22:27:34+00:00",
+    "engine": "1a2d7be",
+    "score": 96.49,
+    "verdict": "bad"
+  },
+  "level3_advanced__email_header": {
+    "at": "2026-10-17T22:27:48+00:00",
+    "engine": "1a2d7be",
+    "score": 85.27,
+    "verdict": "bad"
+  },
+  "level3_advanced__facebook_cover": {
+    "at": "2026-10-17T22:22:55+00:00",
+    "engine": "1a2d7be",
+    "score": 94.63,
+    "verdict": "bad"
+  },
+  "level3_advanced__facebook_post": {
+    "at": "2026-10-17T22:22:49+00:00",
+    "engine": "1a2d7be",
+    "score": 92.81,
+    "verdict": "bad"
+  },
+  "level3_advanced__instagram_portrait": {
+    "at": "2026-10-17T22:22:38+00:00",
+    "engine": "1a2d7be",
+    "score": 96.37,
+    "verdict": "bad"
+  },
+  "level3_advanced__instagram_post": {
+    "at": "2026-10-17T22:22:33+00:00",
+    "engine": "1a2d7be",
+    "score": 98.04,
+    "verdict": "bad"
+  },
+  "level3_advanced__instagram_story": {
+    "at": "2026-10-17T22:22:45+00:00",
+    "engine": "1a2d7be",
+    "score": 96.87,
+    "verdict": "okay"
+  },
+  "level3_advanced__leaderboard": {
+    "at": "2026-10-17T22:27:26+00:00",
+    "engine": "1a2d7be",
+    "score": 82.77,
+    "verdict": "bad"
+  },
+  "level3_advanced__linkedin_banner": {
+    "at": "2026-10-17T22:23:02+00:00",
+    "engine": "1a2d7be",
+    "score": 94.11,
+    "verdict": "okay"
+  },
+  "level3_advanced__medium_rectangle": {
+    "at": "2026-10-17T22:27:29+00:00",
+    "engine": "1a2d7be",
+    "score": 80.18,
+    "verdict": "bad"
+  },
+  "level3_advanced__pinterest_pin": {
+    "at": "2026-10-17T22:27:24+00:00",
+    "engine": "1a2d7be",
+    "score": 96.78,
+    "verdict": "okay"
+  },
+  "level3_advanced__presentation_16_9": {
+    "at": "2026-10-17T22:27:38+00:00",
+    "engine": "1a2d7be",
+    "score": 94.2,
+    "verdict": "okay"
+  },
+  "level3_advanced__wide_skyscraper": {
+    "at": "2026-10-17T22:27:30+00:00",
+    "engine": "1a2d7be",
+    "score": 87.35,
+    "verdict": "bad"
+  },
+  "level3_advanced__x_post": {
+    "at": "2026-10-17T22:27:04+00:00",
+    "engine": "1a2d7be",
+    "score": 92.85,
+    "verdict": "okay"
+  },
+  "level3_advanced__youtube_thumbnail": {
+    "at": "2026-10-17T22:27:03+00:00",
+    "engine": "1a2d7be",
+    "score": 93.04,
+    "verdict": "okay"
+  }
+}
