@@ -375,43 +375,52 @@ repaired and compared with a uniform-scale fallback; failing that, a repaired st
   `requirements.txt`, because the engine ranks candidates with the same checker and scorer.
   The old stretch baseline lives on in `eval/baseline.py`.
 
-**Results (45 cases):** 45/45 pass every hard rule (baseline 1/45). Average score **96.05**
+**Results (45 cases):** 45/45 pass every hard rule (baseline 1/45). Average score **95.82**
 (baseline 87.06). Native resize ≈ 1.3 s/case, of which ≈ 1 s is the 10 contrast renders.
+Docker (amd64, emulated): cached build 113 s, run 15 s for the 3 samples (2.5–4.3 s per case);
+all 45 cases in the container take ≈ 125 s.
+
+**Cross-platform text metrics (important):** with the same skia-python 144.0.post2, glyph advances
+differ by ~1% between macOS (CoreText) and Linux (FreeType). The L3 subhead at 22px wraps to 8
+lines natively and 9 in Docker. We don't know where the official renderer runs, so text boxes
+get at least one spare line of height (invisible, since text is top-aligned), tight boxes get a 3% width
+margin, and group labels must fit in 97% of their width. Verified: all 45 outputs made natively pass
+`check()` inside Docker, and all 45 made in Docker pass natively.
 
 **Robustness:** 40 seeded random designs are in the test suite, and all pass. A one-off run of 300
 more gave 295 clean and 0 crashes. All 5 failures have a source text with letter spacing that
 already overflows its own box inside a group or rotated unit.
 
 ### Five weakest cases (by eye)
-1. **L3 → Leaderboard 728×90 (82.3)**: chaotic. The subhead is demoted into a separate text
+1. **L3 → Leaderboard 728×90 (82.8)**: chaotic. The subhead is demoted into a separate text
    block on the far left, the ribbon floats between the bottle and the CTA, the CTA pill is
    oversized (held at a readable label size), the three badges become a tiny strip, the logo
    is barely visible, and the hierarchy is lost.
-2. **L3 → Medium Rectangle 300×250 (83.2)**: the subhead floats to the top-left ahead of the
+2. **L3 → Medium Rectangle 300×250 (80.2)**: the subhead floats to the top-left ahead of the
    headline, the logo is a speck, the badges are cramped in a column on the right, and the CTA dominates.
-3. **L3 → Email Header 600×200 (87.2)**: no clear reading order. Badges are scattered top and
+3. **L3 → Email Header 600×200 (85.3)**: no clear reading order. Badges are scattered top and
    left, the ribbon cuts across, the subhead is large on the right, and the legal text is in a thin column.
-4. **L3 → Wide Skyscraper 160×600 (87.6)**: the text starves the images (the bottle and logo are
+4. **L3 → Wide Skyscraper 160×600 (87.3)**: the text starves the images (the bottle and logo are
    icons at the top), the ribbon sits mid-flow and splits the badges, and the legal text takes the bottom.
-5. **L1 → Leaderboard 728×90 (97.1)**: tiny content huddled left of centre, two-thirds of the
+5. **L1 → Leaderboard 728×90 (97.0)**: tiny content huddled left of centre, two-thirds of the
    banner empty, logo barely visible. A weak layout that scores well (see below).
 
 ### Where the scorer disagrees with the eye
-- **Sparse layouts score too well.** L1 → Leaderboard 97.1 and L1 → Instagram Story 99.8: the
+- **Sparse layouts score too well.** L1 → Leaderboard 97.0 and L1 → Instagram Story 100.0: the
   content is clumped (left third, or top 40%) with the rest empty. `space` compares coverage and
   empty ninths *to the source*, and the L1 source is itself sparse (7% coverage, 5 empty
   ninths), so emptiness is "faithful". Fix: also penalise absolute empty bands and balance
   (centre of mass far from the canvas centre).
-- **L3 → LinkedIn 92.0**: a big empty middle and unbalanced sizes (18 px text vs a huge bottle) only
+- **L3 → LinkedIn 94.1**: a big empty middle and unbalanced sizes (18 px text vs a huge bottle) only
   cost `space` 0.06. Same fix, plus a size-balance term between hero and text.
-- **Headline dominance uses font_size only.** L2 → Medium Rectangle 95.3: the serif headline at
+- **Headline dominance uses font_size only.** L2 → Medium Rectangle 92.9: the serif headline at
   14 px looks smaller than the 13 px sans subhead and the bold CTA label. Fix: compare rendered
   cap or x-height, or ink area, not the nominal size.
 - **Contrast isn't relative to the source.** Every L3 case pays the same 0.14 for white on the
   source's own orange badges (3.2:1), which the engine can't change. Fix: penalise only
   contrast lost relative to the source.
 - **Reading order punishes legitimate side-by-side layouts.** Split and strip layouts that read well
-  (L3 → Facebook Post 93.0, LinkedIn) get 0.2–0.4 `reading_order`, because the row model
+  (L3 → Facebook Post 92.8, LinkedIn) get 0.2–0.4 `reading_order`, because the row model
   puts the right-hand hero after the text. Fix: judge order within the text column and
   between primaries only.
 - **Floating placement isn't judged.** Demoted units dropped into odd gaps (L3 leaderboard

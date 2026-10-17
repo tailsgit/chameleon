@@ -43,6 +43,7 @@ class Slot:
     h: float
     fs: int | None = None
     scale: float | None = None
+    slack: float = 0.0   # text: spare box height below the lines (see engine.fit.Extent)
 
 
 @dataclass
@@ -223,7 +224,8 @@ def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue):
                 used += need
             lines.append(cur)
         total = sum(max(e.h for _u, e in ln) for ln in lines) + gap * (len(lines) - 1)
-        return lines, total
+        # the last row's spare text height must fit too; earlier rows' slack only overlaps empty box area
+        return lines, total + max(e.slack for _u, e in lines[-1])
 
     lines, total = measure(kc)
     k = kc
@@ -255,7 +257,7 @@ def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue):
         lw = sum(e.w for _u, e in ln) + gap * (len(ln) - 1)
         x = x0 + (W - lw) / 2 if align == "center" else x0
         for uid, e in ln:
-            slots.append(Slot(uid, x, y + (lh - e.h) / 2, e.w, e.h, fs=e.fs, scale=e.scale))
+            slots.append(Slot(uid, x, y + (lh - e.h) / 2, e.w, e.h, fs=e.fs, scale=e.scale, slack=e.slack))
             x += e.w + gap
         y += lh + step
     return slots, k

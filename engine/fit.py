@@ -24,6 +24,12 @@ from eval.check import text_layout
 from eval.score import MIN_TEXT_PX_ABS, MIN_TEXT_REL_HEIGHT
 
 MIN_DIM = 1.5        # px. check() treats < 1px as a hidden element
+# Text metrics differ by ~1-2% between platforms (CoreText on macOS, FreeType on Linux), so the
+# same text can wrap to one more line wherever the official renderer runs. Text boxes get spare
+# height (invisible, since text is top-aligned) and tight widths keep a margin.
+SLACK_LINES = 0.12   # spare lines as a fraction of the line count, at least one
+WIDTH_MARGIN = 1.03  # tight text boxes are this much wider than the widest line
+LABEL_MARGIN = 0.97  # text inside a scaled group must fit in this fraction of its width
 FLOAT_GAP = 0.5      # free-space padding around placed content, in grid cells
 FLOAT_CANDIDATES = 6  # free rectangles tried exactly per floating text unit
 
@@ -34,6 +40,7 @@ class Extent:
     h: float
     fs: int | None = None        # text units
     scale: float | None = None   # image and rigid units
+    slack: float = 0.0           # text: spare box height below the lines (not part of the layout)
 
 
 class Sizer:
@@ -110,12 +117,13 @@ class Sizer:
         w = w or max_w  # unfixable (a word wider than max_w at 1px): check() will reject this candidate
         lay = self.layout(eid, fs, w)
         if lay["lines"]:
-            tight = max(b[2] - b[0] for b in lay["line_boxes"]) + 0.5
+            tight = (max(b[2] - b[0] for b in lay["line_boxes"]) + 0.5) * WIDTH_MARGIN
             if tight < w:
                 t = self.layout(eid, fs, tight)
                 if t["lines"] == lay["lines"] and self.fits(eid, fs, tight):
                     w, lay = tight, t
-        return Extent(w, lay["height"] + 1.0, fs=fs)
+        line = fs * src.get("line_height", 1.2)
+        return Extent(w, lay["height"] + 1.0, fs=fs, slack=line * max(1, math.ceil(SLACK_LINES * lay["lines"])))
 
     def unit_extent(self, u, k, max_w, max_h=math.inf, img_mult=1.0, rescue=False):
         if u.kind == "text":
@@ -139,7 +147,7 @@ def realize(a, plan, tw, th):
     for slot in plan.slots:
         u = a.units[slot.uid]
         if u.kind == "text":
-            place_text(out[u.members[0]], sizer, slot)
+            place_text(out[u.members[0]], sizer, slot, th)
         else:
             place_rigid(out, sizer, a, u, slot.scale, slot.x, slot.y)
         placed += [element_box(out[m]) for m in u.members]
@@ -168,11 +176,11 @@ def place_background(el, tw, th):
         el.update(x=0, y=0, width=tw, height=th)
 
 
-def place_text(el, sizer, slot):
+def place_text(el, sizer, slot, th):
     fs = slot.fs
     while fs > 1 and not sizer.fits(el["id"], fs, slot.w, slot.h):
         fs -= 1
-    el.update(x=slot.x, y=slot.y, width=slot.w, height=slot.h)
+    el.update(x=slot.x, y=slot.y, width=slot.w, height=max(slot.h, min(slot.h + slot.slack, th - slot.y)))
     sizer.set_font(el, fs)
 
 
@@ -184,7 +192,7 @@ def place_rigid(out, sizer, a, u, s, x, y):
                   width=src["width"] * s, height=src["height"] * s)
         if el["type"] == "text":
             fs = max(1, math.floor(src["font_size"] * s + 1e-9))
-            while fs > 1 and not sizer.fits(m, fs, el["width"], el["height"]):
+            while fs > 1 and not sizer.fits(m, fs, el["width"] * LABEL_MARGIN, el["height"]):
                 fs -= 1
             if not sizer.fits(m, fs, el["width"]):  # letter-spaced: narrow the box around its centre
                 w = sizer.fit_width(m, fs, el["width"])
@@ -217,10 +225,12 @@ def place_floating(out, sizer, a, u, k, grid, tw, th):
         best = None
         for r in sorted(rects, key=lambda r: -(estimate(r) - 0.25 * _dist(r, ax, ay) / diag))[:FLOAT_CANDIDATES]:
             rw, rh = r[2] - r[0], r[3] - r[1]
+            def room(fs):  # leave one spare line for other platforms' metrics
+                return rh - fs * src.get("line_height", 1.2)
             fs = want
-            while fs > 1 and not sizer.fits(eid, fs, rw, rh):
+            while fs > 1 and not sizer.fits(eid, fs, rw, room(fs)):
                 fs -= 1
-            if not sizer.fits(eid, fs, rw, rh):
+            if not sizer.fits(eid, fs, rw, room(fs)):
                 continue
             ext = sizer.text_extent(eid, fs / src["font_size"], rw, rescue=True)
             value = fs / want - 0.25 * _dist(r, ax, ay) / diag
@@ -232,7 +242,7 @@ def place_floating(out, sizer, a, u, k, grid, tw, th):
         else:
             _v, r, ext = best
             x, y = _clamp(ax - ext.w / 2, r[0], r[2] - ext.w), _clamp(ay - ext.h / 2, r[1], r[3] - ext.h)
-        out[eid].update(x=x, y=y, width=ext.w, height=ext.h)
+        out[eid].update(x=x, y=y, width=ext.w, height=max(ext.h, min(ext.h + ext.slack, th - y)))
         sizer.set_font(out[eid], ext.fs)
         return
 
