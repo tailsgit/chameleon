@@ -5,7 +5,8 @@
 
 Labels (eval/results/labels.json, Good / Okay / Bad) were given to the engine
 outputs frozen in eval/calibration/outputs/, so the scorer can change without
-the labels going stale. Agreement metrics:
+the labels going stale. Only labels given on that engine commit (outputs/ENGINE) are
+used; verdicts given later, on newer outputs, need those outputs frozen too. Agreement metrics:
   pairwise  - of all case pairs with different labels, the share the score orders
               the same way (ties count half); 0.5 = chance, 1 = perfect
   tau_b     - Kendall's tau-b between score and label (-1..1)
@@ -31,7 +32,8 @@ RANK = {"bad": 0, "okay": 1, "good": 2}
 
 
 def load():
-    labels = json.loads(LABELS.read_text())
+    engine = (OUTPUTS / "ENGINE").read_text().strip()
+    labels = {k: v for k, v in json.loads(LABELS.read_text()).items() if v.get("engine") == engine}
     sources = {p.stem.replace("chameleon_sample_", ""): json.loads(p.read_text())["source"]
                for p in (REPO / "input").glob("chameleon_sample_*.json")}
     cases = []

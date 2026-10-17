@@ -102,7 +102,7 @@
 
 <script>
 const VERDICTS = [["good", "Good"], ["okay", "Okay"], ["bad", "Bad"]];
-let cases = [], labels = {};
+let cases = [], labels = {}, commit = "";
 const $ = (s) => document.querySelector(s);
 
 function el(tag, attrs = {}, ...children) {
@@ -130,7 +130,9 @@ function stage(src, alt) {
 
 function card(c) {
   const verdict = labels[c.case]?.verdict || "";
-  const status = el("div", { class: "status", role: "status" });
+  const was = labels[c.case]?.engine;
+  const status = el("div", { class: "status", role: "status" },
+                    verdict && was !== commit ? `Verdict given on engine ${was}; this output is from ${commit}` : "");
   const buttons = VERDICTS.map(([v, label]) => el("button", {
     type: "button", "data-v": v, "aria-pressed": String(verdict === v),
     onclick: () => save(c.case, verdict === v ? null : v, status),  // clicking the active verdict clears it
@@ -206,7 +208,7 @@ async function init() {
     const [cr, lr] = await Promise.all([fetch("/api/cases"), fetch("/api/labels")]);
     if (!cr.ok) throw new Error(`cases: ${cr.status}`);
     const data = await cr.json();
-    cases = data.cases; labels = lr.ok ? await lr.json() : {};
+    cases = data.cases; commit = data.commit; labels = lr.ok ? await lr.json() : {};
     const avg = cases.reduce((a, c) => a + c.total, 0) / Math.max(1, cases.length);
     const passed = cases.filter((c) => !c.violations.length).length;
     $("#meta").textContent = `Engine ${data.commit} · ${cases.length} cases · ${passed} pass every hard rule · average score ${avg.toFixed(2)}`;
