@@ -1,0 +1,317 @@
+"""Layout recipes: turn an Analysis + target canvas + knobs into slot boxes.
+
+Every recipe places "flow" units with the same column solver (`solve_column`):
+units keep their source reading-order rows (a row wraps when it's too wide), and
+one shared scale k (fonts = floor(source font x k), never below readable) is
+binary-searched to be as large as fits, up to a cap of
+`cap x sqrt(target area / source area)`. If even the readable minimum doesn't
+fit, the least important unit (never the headline) is demoted to "floating" and
+placed afterwards into leftover space by engine.fit.
+
+Recipes:
+  stack    single centred/left column over the whole canvas
+  split    hero image in one column (left or right), everything else in the other
+  strip    one row for ultra-wide banners: logo | hero | text column | CTA
+  overlay  a stack confined to the quietest part of the background image
+  compact  stack or strip with only the primary units (headline, CTA, logo, hero) in
+           flow; everything else floats into leftover space. For tiny canvases.
+"""
+
+import math
+from dataclasses import dataclass, field
+from itertools import product
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+from engine.analyze import PRIMARY_ROLES
+from engine.fit import Sizer
+
+ASSETS_DIR = Path(__file__).resolve().parents[1] / "brand_kit" / "assets"
+GAP = 0.03          # vertical gap between rows, fraction of the column's shorter side
+H_GAP = 0.03        # horizontal gap between strip cells, fraction of the canvas width
+BISECT_STEPS = 16
+
+
+@dataclass
+class Slot:
+    uid: str
+    x: float
+    y: float
+    w: float
+    h: float
+    fs: int | None = None
+    scale: float | None = None
+
+
+@dataclass
+class Plan:
+    recipe: str
+    knobs: dict
+    slots: list
+    floating: list
+    k: float
+    margin: float
+    sizer: Sizer = field(repr=False, default=None)
+
+
+def generate(a, tw, th):
+    """All candidate plans for one task: every applicable recipe x its knob grid."""
+    sizer = Sizer(a, tw, th)
+    hero = a.by_role("hero")
+    has_hero = hero is not None and not hero.floating
+    aspect = tw / th
+    tiny = min(tw, th) < 200 or tw * th < 120_000
+    plans = []
+
+    def add(fn, name, **knobs):
+        plan = fn(a, sizer, tw, th, **knobs)
+        if plan is not None:
+            plan.recipe, plan.knobs, plan.sizer = name, knobs, sizer
+            plans.append(plan)
+
+    imgs = (0.7, 1.0, 1.4) if has_hero else (1.0,)
+    orders = ("source", "hero_first") if has_hero else ("source",)
+    for align, vjust, img, cap, order in product(("center", "left"), ("spread", "center"), imgs, (0.9, 1.2), orders):
+        add(stack, "stack", align=align, vjust=vjust, img_mult=img, cap=cap, order=order)
+    if has_hero and aspect >= 0.9:
+        for side, ratio, align, vjust in product(("left", "right"), (0.4, 0.55), ("center", "left"), ("spread", "center")):
+            add(split, "split", side=side, ratio=ratio, align=align, vjust=vjust, cap=1.0)
+    if aspect >= 2.0:
+        for hero_pos, img, align, cap in product(("left", "right"), (0.8, 1.0), ("center", "left"), (0.9, 1.2)):
+            add(strip, "strip", hero_pos=hero_pos, img_mult=img, align=align, cap=cap)
+    for region in quiet_regions(a, tw, th)[:2]:
+        for align in ("center", "left"):
+            add(stack, "overlay", align=align, vjust="center", img_mult=1.0, cap=1.0, order="source", region=region)
+    if tiny:
+        for align, cap in product(("center", "left"), (0.9, 1.2)):
+            if aspect >= 2.0:
+                add(strip, "compact", hero_pos="left", img_mult=1.0, align=align, cap=cap, primaries_only=True)
+            else:
+                add(stack, "compact", align=align, vjust="spread", img_mult=1.0, cap=cap, order="source", primaries_only=True)
+    return plans
+
+
+# --- recipes ------------------------------------------------------------------
+
+def stack(a, sizer, tw, th, align, vjust, img_mult, cap, order, primaries_only=False, region=None):
+    m = margin(tw, th)
+    box = region or (m, m, tw - m, th - m)
+    rows, floating = flow(a, primaries_only)
+    if order == "hero_first":
+        hero = a.by_role("hero")
+        rows = sorted(rows, key=lambda r: hero.id not in r)
+    slots, k, demoted = solve_column(a, sizer, rows, box, k_cap(a, tw, th, cap), align, vjust, img_mult)
+    return Plan("", {}, slots, floating + demoted, k, m)
+
+
+def split(a, sizer, tw, th, side, ratio, align, vjust, cap):
+    m = margin(tw, th)
+    hero = a.by_role("hero")
+    gap = H_GAP * tw
+    bw, bh = tw - 2 * m, th - 2 * m
+    img_w = ratio * (bw - gap)
+    text_w = bw - gap - img_w
+    s = min(img_w / max(hero.w, 1e-6), bh / max(hero.h, 1e-6))
+    img_x0 = m if side == "left" else m + text_w + gap
+    text_x0 = m + img_w + gap if side == "left" else m
+    hero_slot = Slot(hero.id, img_x0 + (img_w - hero.w * s) / 2, m + (bh - hero.h * s) / 2, hero.w * s, hero.h * s, scale=s)
+    rows, floating = flow(a, False)
+    rows = [[u for u in r if u != hero.id] for r in rows]
+    slots, k, demoted = solve_column(a, sizer, rows, (text_x0, m, text_x0 + text_w, th - m),
+                                     k_cap(a, tw, th, cap), align, vjust, 1.0)
+    return Plan("", {}, [hero_slot] + slots, floating + demoted, k, m)
+
+
+def strip(a, sizer, tw, th, hero_pos, img_mult, align, cap, primaries_only=False):
+    m = margin(tw, th)
+    x0, y0, x1, y1 = m, m, tw - m, th - m
+    H, W = y1 - y0, x1 - x0
+    gap = H_GAP * tw
+    kc = k_cap(a, tw, th, cap)
+    rows, floating = flow(a, primaries_only)
+    in_flow = {u for r in rows for u in r}
+
+    def cell(role):
+        u = a.by_role(role)
+        return u if u is not None and u.id in in_flow and u.kind != "text" else None
+
+    logo, hero, cta = cell("logo"), cell("hero"), cell("cta")
+    scales = {}
+    if logo:
+        scales[logo.id] = min(0.6 * H / max(logo.h, 1e-6), 1.5 * kc)
+    if hero:
+        scales[hero.id] = img_mult * H / max(hero.h, 1e-6)
+    if cta:
+        scales[cta.id] = min(0.6 * H / max(cta.h, 1e-6), max(kc, sizer.read_scale(cta)))
+    fixed = {u.id: u for u in (logo, hero, cta) if u}
+    text_rows = [[u for u in r if u not in fixed] for r in rows]
+    text_rows = [r for r in text_rows if r]
+
+    n_cells = len(fixed) + (1 if text_rows else 0)
+    fixed_w = sum(fixed[i].w * s for i, s in scales.items())
+    room = W - gap * (n_cells - 1)
+    min_text = 0.35 * W if text_rows else 0
+    if fixed_w > room - min_text and fixed_w > 0:
+        f = max(0.05, (room - min_text) / fixed_w)
+        scales = {i: max(s * f, sizer.floor_scale(fixed[i])) for i, s in scales.items()}
+        fixed_w = sum(fixed[i].w * s for i, s in scales.items())
+    text_w = max(1.0, room - fixed_w) if text_rows else 0
+
+    order = [logo, hero, "TEXT", cta] if hero_pos == "left" else [logo, "TEXT", hero, cta]
+    order = [c for c in order if c is not None and (c != "TEXT" or text_rows)]
+    if not text_rows:  # spread the fixed cells evenly instead
+        gap = (W - fixed_w) / max(1, len(order) - 1) if len(order) > 1 else 0
+    slots, x, k, demoted = [], x0 if len(order) > 1 or text_rows else x0 + (W - fixed_w) / 2, kc, []
+    for c in order:
+        if c == "TEXT":
+            sl, k, demoted = solve_column(a, sizer, text_rows, (x, y0, x + text_w, y1), kc, align, "center", img_mult)
+            slots += sl
+            x += text_w + gap
+        else:
+            s = scales[c.id]
+            slots.append(Slot(c.id, x, y0 + (H - c.h * s) / 2, c.w * s, c.h * s, scale=s))
+            x += c.w * s + gap
+    return Plan("", {}, slots, floating + demoted, k, m)
+
+
+# --- shared solver ------------------------------------------------------------
+
+def solve_column(a, sizer, rows, box, kc, align, vjust, img_mult):
+    """Lay rows of units out top to bottom in `box` at the largest shared scale <= kc.
+    Returns (slots, k, demoted unit ids)."""
+    rows = [list(r) for r in rows if r]
+    demoted = []
+    while rows:
+        res = _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue=False)
+        if res:
+            return res[0], res[1], demoted
+        victims = [u for r in rows for u in r if a.units[u].role != "headline"]
+        if not victims:
+            break
+        v = min(victims, key=lambda u: a.units[u].importance)
+        demoted.append(v)
+        rows = [[u for u in r if u != v] for r in rows]
+        rows = [r for r in rows if r]
+    if rows:  # only the headline is left and even it doesn't fit at a readable size
+        res = _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue=True)
+        if res:
+            return res[0], res[1], demoted
+        demoted += [u for r in rows for u in r]
+    return [], 0.0, demoted
+
+
+def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue):
+    x0, y0, x1, y1 = box
+    W, H = x1 - x0, y1 - y0
+    if W <= 1 or H <= 1:
+        return None
+    gap = max(2.0, GAP * min(W, H))
+
+    def measure(k):
+        lines = []
+        for row in rows:
+            cur, used = [], 0.0
+            for uid in row:
+                e = sizer.unit_extent(a.units[uid], k, W, img_mult=img_mult, rescue=rescue)
+                need = e.w + (gap if cur else 0)
+                if cur and used + need > W:
+                    lines.append(cur)
+                    cur, used, need = [], 0.0, e.w
+                cur.append((uid, e))
+                used += need
+            lines.append(cur)
+        total = sum(max(e.h for _u, e in ln) for ln in lines) + gap * (len(lines) - 1)
+        return lines, total
+
+    lines, total = measure(kc)
+    k = kc
+    if total > H:
+        lo = 0.005
+        lines, total = measure(lo)
+        if total > H:
+            return None
+        hi = kc
+        for _ in range(BISECT_STEPS):
+            mid = (lo + hi) / 2
+            if measure(mid)[1] <= H:
+                lo = mid
+            else:
+                hi = mid
+        k = lo
+        lines, total = measure(k)
+
+    extra = H - total
+    n = len(lines)
+    if vjust == "spread":
+        pad = extra / (n + 1)
+        y, step = y0 + pad, gap + pad
+    else:
+        y, step = y0 + extra / 2, gap
+    slots = []
+    for ln in lines:
+        lh = max(e.h for _u, e in ln)
+        lw = sum(e.w for _u, e in ln) + gap * (len(ln) - 1)
+        x = x0 + (W - lw) / 2 if align == "center" else x0
+        for uid, e in ln:
+            slots.append(Slot(uid, x, y + (lh - e.h) / 2, e.w, e.h, fs=e.fs, scale=e.scale))
+            x += e.w + gap
+        y += lh + step
+    return slots, k
+
+
+# --- helpers ------------------------------------------------------------------
+
+def flow(a, primaries_only):
+    """(rows of flow unit ids, floating unit ids)."""
+    floating = [uid for uid, u in a.units.items() if u.floating]
+    rows = []
+    for r in a.rows:
+        keep = [u for u in r if not primaries_only or a.units[u].role in PRIMARY_ROLES]
+        floating += [u for u in r if u not in keep]
+        if keep:
+            rows.append(keep)
+    return rows, floating
+
+
+def margin(tw, th):
+    return max(2.0, 0.05 * min(tw, th))
+
+
+def k_cap(a, tw, th, cap):
+    return cap * math.sqrt(tw * th / (a.sw * a.sh))
+
+
+def quiet_regions(a, tw, th):
+    """Candidate text regions (60% bands and the centre), quietest first, judged by
+    the mean gradient of the background image as the renderer will crop it.
+    Empty when there is no background image (nothing to be quiet against)."""
+    bg = next((a.els[i] for i in a.background if a.els[i]["type"] == "image"), None)
+    path = ASSETS_DIR / bg["asset_id"] if bg else None
+    if not path or not path.is_file():
+        return []
+    try:
+        img = Image.open(path).convert("L")
+    except OSError:
+        return []
+    s = max(tw / img.width, th / img.height)  # same centred cover crop as the renderer
+    cw, ch = tw / s, th / s
+    img = img.crop((round((img.width - cw) / 2), round((img.height - ch) / 2),
+                    round((img.width + cw) / 2), round((img.height + ch) / 2)))
+    gw = 64
+    gh = max(2, round(gw * th / tw))
+    g = np.asarray(img.resize((gw, gh)), dtype=np.float64) / 255
+    busy = np.abs(np.diff(g, axis=1))[:-1, :] + np.abs(np.diff(g, axis=0))[:, :-1]
+    m = margin(tw, th)
+    regions = {
+        "top": (0, 0, 1, 0.6), "bottom": (0, 0.4, 1, 1), "left": (0, 0, 0.6, 1),
+        "right": (0.4, 0, 1, 1), "centre": (0.15, 0.15, 0.85, 0.85),
+    }
+    scored = []
+    for fx0, fy0, fx1, fy1 in regions.values():
+        r0, r1 = int(fy0 * (gh - 1)), max(int(fy0 * (gh - 1)) + 1, int(fy1 * (gh - 1)))
+        c0, c1 = int(fx0 * (gw - 1)), max(int(fx0 * (gw - 1)) + 1, int(fx1 * (gw - 1)))
+        box = (max(m, fx0 * tw), max(m, fy0 * th), min(tw - m, fx1 * tw), min(th - m, fy1 * th))
+        scored.append((float(busy[r0:r1, c0:c1].mean()), box))
+    return [box for _b, box in sorted(scored)]

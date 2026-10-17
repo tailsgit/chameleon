@@ -113,7 +113,7 @@ def _summary(rows, formats, render, contrast):
         return f"mean {statistics.mean(xs):.2f} ms, median {statistics.median(xs):.2f} ms, max {max(xs):.2f} ms" if xs else "n/a"
 
     try:
-        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True, text=True).stdout.strip()
+        commit = subprocess.run(["git", "describe", "--always", "--dirty"], cwd=REPO, capture_output=True, text=True).stdout.strip()
     except OSError:
         commit = "?"
     passed = sum(r["passed"] for r in rows)

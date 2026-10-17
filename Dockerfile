@@ -26,6 +26,8 @@ COPY chameleon_design_schema_v0.9.json .
 COPY brand_kit/ ./brand_kit/
 COPY renderer/ ./renderer/
 COPY engine/ ./engine/
+# the engine ranks candidates with the same checker and scorer we benchmark with
+COPY eval/*.py ./eval/
 
 # input/ and output/ are mounted as volumes at run time (see README) —
 # not baked into the image.

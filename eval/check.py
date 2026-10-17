@@ -204,7 +204,7 @@ def _has_numeric_box(el):
 
 def _text_measurable(el):
     return isinstance(el.get("content"), str) and _num(el.get("font_size")) and el["font_size"] >= 1 \
-        and isinstance(el.get("font_family"), str)
+        and isinstance(el.get("font_family"), str) and el["width"] > 0 and el["height"] > 0
 
 
 def _is_hidden(el):

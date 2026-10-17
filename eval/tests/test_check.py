@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from engine.resize import resize
+from eval.baseline import stretch as resize  # the known-bad uniform stretch
 from eval.check import check
 
 REPO = Path(__file__).resolve().parents[2]
