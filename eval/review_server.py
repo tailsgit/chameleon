@@ -25,23 +25,26 @@ RESULTS = EVAL / "results"
 RENDERS = RESULTS / "renders"
 LABELS = RESULTS / "labels.json"
 VERDICTS = {"good", "okay", "bad"}
-PENALTY_COLS = ("overlap", "small_text", "headline", "space", "alignment", "reading_order", "contrast")
 _lock = threading.Lock()
 
 
 def load_cases():
-    rows = list(csv.DictReader((RESULTS / "cases.csv").open()))
+    reader = csv.DictReader((RESULTS / "cases.csv").open())
+    cols = reader.fieldnames
+    penalty_cols = cols[cols.index("total") + 1:cols.index("rules")]  # bench writes the penalties between these
+    rows = list(reader)
     cases = []
     for r in rows:
         cases.append({
             "case": r["case"], "sample": r["sample"], "format": r["format"],
             "width": int(r["width"]), "height": int(r["height"]),
             "passed": r["passed"] == "True", "total": float(r["total"] or 0),
-            "penalties": {k: float(r[k]) for k in PENALTY_COLS if r.get(k)},
+            "penalties": {k: float(r[k]) for k in penalty_cols if r.get(k)},
             "violations": [{"rule": v.split(":", 1)[0], "id": v.split(":", 1)[1] if ":" in v else ""}
                            for v in r["rules"].split(";") if v],
             "output_png": f"/renders/{r['case']}.png" if (RENDERS / f"{r['case']}.png").is_file() else None,
             "source_png": f"/renders/source__{r['sample']}.png" if (RENDERS / f"source__{r['sample']}.png").is_file() else None,
+            "stretch_png": f"/renders/stretch__{r['case']}.png" if (RENDERS / f"stretch__{r['case']}.png").is_file() else None,
         })
     return cases
 

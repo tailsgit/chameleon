@@ -3,7 +3,9 @@
 1. Drop duplicate candidates and any with a hard-rule violation (eval.check).
 2. Rank the rest by the geometric score (eval.score, ~1 ms each), render the top
    RENDER_TOP and pick the best full score including contrast. Rendering is
-   expensive under amd64 emulation, so only those few get rendered.
+   expensive under amd64 emulation, so only those few get rendered. A `preferred`
+   candidate (the source scaled uniformly, when the aspect ratio barely changes)
+   wins unless another beats it by more than PREFER_MARGIN points.
 3. If nothing passes: repair every candidate (pull into the canvas, fix image
    proportions, shrink text until it fits) plus a uniform-scale fallback, and return
    the one with the fewest violations, then the best score.
@@ -19,22 +21,25 @@ from eval.check import check, text_layout
 from eval.score import score
 
 RENDER_TOP = 10
+PREFER_MARGIN = 2.0  # points out of 100: "clearly better" than the preferred candidate
 log = logging.getLogger(__name__)
 
 
-def select(source, target, outputs):
+def select(source, target, outputs, preferred=None):
+    pref_key = json.dumps(preferred, sort_keys=True) if preferred is not None else None
+    bonus = lambda o: PREFER_MARGIN if pref_key and json.dumps(o, sort_keys=True) == pref_key else 0.0
     seen, unique = set(), []
-    for o in outputs:
+    for o in ([preferred] if preferred is not None else []) + outputs:
         key = json.dumps(o, sort_keys=True)
         if key not in seen:
             seen.add(key)
             unique.append(o)
 
-    passing = [(o, score(source, target, o)["total"]) for o in unique if _passes(source, target, o)]
+    passing = [(o, score(source, target, o)["total"] + bonus(o)) for o in unique if _passes(source, target, o)]
     if passing:
         top = sorted(passing, key=lambda t: -t[1])[:RENDER_TOP]
         try:
-            return max(top, key=lambda t: score(source, target, t[0], contrast=True)["total"])[0]
+            return max(top, key=lambda t: score(source, target, t[0], contrast=True)["total"] + bonus(t[0]))[0]
         except Exception:  # the renderer is unavailable: fall back to the geometric ranking
             log.exception("contrast scoring failed; using geometric ranking")
             return top[0][0]

@@ -87,3 +87,10 @@ def test_degenerate_inputs_do_not_crash():
          "font_size": 12, "color": "rgba(0,0,0,1)"}]}
     out = resize(zero, target)  # must not raise; an empty, zero-size text can't satisfy every rule
     assert {e["id"] for e in out["elements"]} == {"t"}
+
+
+def test_same_aspect_keeps_the_source_layout():
+    task = json.loads((REPO / "input" / "chameleon_sample_level3_advanced.json").read_text())
+    target = {"width": 864, "height": 1080}  # 4:5 like the 1080x1350 source
+    out = resize(task["source"], target)
+    assert out == engine.select.fallback(task["source"], target) and check(task["source"], target, out) == []

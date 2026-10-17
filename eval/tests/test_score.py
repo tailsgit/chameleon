@@ -21,10 +21,42 @@ def el(design, eid):
 
 
 @pytest.mark.parametrize("name", SAMPLES)
-def test_identity_is_perfect(name):
+def test_identity_is_perfect_except_target_relative_space(name):
     src = load(name)["source"]
     r = score(src, src["canvas"], copy.deepcopy(src))
-    assert r["total"] == 100 and set(r["breakdown"]) == set(GEOMETRIC)
+    assert set(r["breakdown"]) == set(GEOMETRIC)
+    assert all(b["penalty"] == 0 for k, b in r["breakdown"].items() if k != "space")
+    # space is judged against the canvas, not the source: the sparse L1 layout pays, the full ones do not
+    assert (r["breakdown"]["space"]["penalty"] > 0.1) == (name == "level1_warmup")
+
+
+def test_empty_space_is_judged_against_the_target():
+    src = load("level1_warmup")["source"]
+    wide = {"width": 2160, "height": 1080}
+    huddled = copy.deepcopy(src)  # the source as is, on the left half of a 2:1 canvas
+    huddled["canvas"] = wide
+    el(huddled, "bg").update(width=2160)
+    centred = copy.deepcopy(huddled)
+    for e in centred["elements"][1:]:
+        e["x"] += 540
+    own = score(src, src["canvas"], src)["breakdown"]
+    s_h, s_c = (score(src, wide, o)["breakdown"] for o in (huddled, centred))
+    assert s_c["space"]["penalty"] > own["space"]["penalty"] + 0.1  # same content, twice the canvas
+    assert s_h["balance"]["penalty"] > 0.3 and s_c["balance"]["penalty"] == 0
+
+
+def test_hole_between_halves_is_empty_space():
+    src = load("level1_warmup")["source"]
+    t = {"width": 2160, "height": 1080}
+    def split(text_x):  # logo on the left, text block at text_x
+        out = copy.deepcopy(src)
+        out["canvas"] = t
+        el(out, "bg").update(width=2160)
+        el(out, "logo").update(x=100, y=490)
+        el(out, "headline").update(x=text_x, y=420)
+        el(out, "cta").update(x=text_x, y=620)
+        return score(src, t, out)["breakdown"]["space"]["penalty"]
+    assert split(1260) > split(520) + 0.1
 
 
 def test_baseline_problems_are_penalised():
@@ -32,13 +64,11 @@ def test_baseline_problems_are_penalised():
     for name in SAMPLES:
         t = load(name)
         b[name] = score(t["source"], t["target_canvas"], resize(t["source"], t["target_canvas"]))
-    # L2: everything stays in the middle column of a 4:1 banner, text shrinks to 6-8px
-    assert b["level2_core"]["breakdown"]["space"]["penalty"] > 0.5
+    # L2: text shrinks to 6-8px on a 4:1 banner (stretching does fill the canvas, so space is fine)
     assert b["level2_core"]["breakdown"]["small_text"]["penalty"] > 0.2
     # L3: every font collapses to 1-2px
     assert b["level3_advanced"]["breakdown"]["small_text"]["penalty"] > 0.8
-    assert b["level3_advanced"]["breakdown"]["space"]["penalty"] > 0.5
-    assert b["level3_advanced"]["total"] < b["level2_core"]["total"] < b["level1_warmup"]["total"] <= 100
+    assert max(b["level2_core"]["total"], b["level3_advanced"]["total"]) < 95
 
 
 def _mutated(mutate):
@@ -58,6 +88,16 @@ def test_headline_must_stay_largest():
     assert _mutated(lambda o: el(o, "subhead").update(font_size=70))["headline"]["penalty"] > 0
 
 
+def test_headline_dominance_is_visual_not_nominal():
+    # 14px bold serif over a 12px regular sans: nominally bigger, visually close to parity
+    def squash(o):
+        el(o, "headline").update(font_size=14)
+        el(o, "subhead").update(font_size=12)
+        el(o, "badge_label").update(font_size=11)
+    assert _mutated(squash)["headline"]["penalty"] > 0.3
+    assert _mutated(lambda o: el(o, "headline").update(font_size=44))["headline"]["penalty"] == 0
+
+
 def test_near_miss_alignment():
     assert _mutated(lambda o: el(o, "subhead").update(x=148))["alignment"]["penalty"] > 0
 
@@ -70,6 +110,30 @@ def test_reading_order():
     assert _mutated(swap)["reading_order"]["penalty"] > 0
 
 
+def test_side_by_side_reading_down_each_column_is_fine():
+    src = load("level1_warmup")["source"]
+    t = {"width": 2160, "height": 1080}
+    out = copy.deepcopy(src)  # logo on the left half, headline then CTA stacked on the right half
+    out["canvas"] = t
+    el(out, "bg").update(width=2160)
+    el(out, "logo").update(x=380, y=490)
+    el(out, "headline").update(x=1220, y=420)
+    el(out, "cta").update(x=1220, y=620)
+    assert score(src, t, out)["breakdown"]["reading_order"]["penalty"] == 0
+
+
+def test_floating_elements_must_keep_their_corner():
+    src = load("level3_advanced")["source"]
+    def ribbon_at(o, x, y):
+        for i in ("ribbon_bg", "ribbon_label"):
+            el(o, i)["x"] += x - 740
+            el(o, i)["y"] += y - 30
+        return score(src, src["canvas"], o)["breakdown"]["floating"]
+    assert ribbon_at(copy.deepcopy(src), 740, 30)["penalty"] == 0
+    moved = ribbon_at(copy.deepcopy(src), 300, 400)
+    assert moved["penalty"] > 0.4 and "ribbon" in moved["detail"]
+
+
 def test_contrast_only_when_asked_and_detects_dark_text():
     src = load("level1_warmup")["source"]
     assert "contrast" not in score(src, src["canvas"], src)["breakdown"]
@@ -78,3 +142,12 @@ def test_contrast_only_when_asked_and_detects_dark_text():
     el(dark, "headline")["color"] = "rgba(50,30,45,1)"
     bad = score(src, src["canvas"], dark, contrast=True)["breakdown"]["contrast"]
     assert ok == 0 and bad["penalty"] > 0.4 and bad["detail"].startswith("headline")  # mean over 2 texts
+
+
+def test_contrast_the_source_already_had_is_not_penalised():
+    src = copy.deepcopy(load("level1_warmup")["source"])
+    el(src, "cta")["color"] = "rgba(70,40,60,1)"  # the designer's own low-contrast choice
+    assert score(src, src["canvas"], src, contrast=True)["breakdown"]["contrast"]["penalty"] == 0
+    worse = copy.deepcopy(src)
+    el(worse, "cta")["color"] = "rgba(55,35,50,1)"
+    assert score(src, src["canvas"], worse, contrast=True)["breakdown"]["contrast"]["penalty"] > 0

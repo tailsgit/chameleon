@@ -29,7 +29,7 @@
   .controls { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
   select { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line);
            background: var(--card); color: var(--text); }
-  main { padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 560px), 1fr)); }
+  main { padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 720px), 1fr)); }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px;
           display: flex; flex-direction: column; gap: 12px; }
   .card[data-verdict="good"] { border-color: var(--good); }
@@ -39,10 +39,10 @@
   .title h2 { font-size: 15px; margin: 0; }
   .title .size { color: var(--muted); font-weight: 400; }
   .score { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   figure { margin: 0; display: flex; flex-direction: column; gap: 4px; }
   figcaption { color: var(--muted); font-size: 12px; }
-  .stage { background: var(--stage); border-radius: 6px; height: 240px; display: flex;
+  .stage { background: var(--stage); border-radius: 6px; height: 220px; display: flex;
            align-items: center; justify-content: center; padding: 6px; }
   .stage img { max-width: 100%; max-height: 100%; display: block; cursor: zoom-in; }
   .stage .none { color: var(--muted); font-size: 12px; text-align: center; padding: 8px; }
@@ -67,7 +67,7 @@
   dialog { border: none; padding: 0; background: transparent; max-width: 96vw; max-height: 96vh; }
   dialog::backdrop { background: rgb(0 0 0 / 0.75); }
   dialog img { max-width: 96vw; max-height: 92vh; display: block; }
-  @media (max-width: 600px) { .stage { height: 160px; } .controls { margin-left: 0; } }
+  @media (max-width: 600px) { .stage { height: 120px; } .controls { margin-left: 0; } }
 </style>
 </head>
 <body>
@@ -146,9 +146,10 @@ function card(c) {
     el("div", { class: "title" },
       el("h2", {}, `${c.sample} → ${c.format} `, el("span", { class: "size" }, `${c.width}×${c.height}`)),
       el("div", { class: "score", title: "Geometric + contrast score, 0–100" }, c.total.toFixed(1))),
-    el("div", { class: "pair" },
-      el("figure", {}, stage(c.source_png, `Source design ${c.sample}`), el("figcaption", {}, "Source")),
-      el("figure", {}, stage(c.output_png, `Our output for ${c.format}`), el("figcaption", {}, "Our output"))),
+    el("div", { class: "trio" },
+      el("figure", {}, stage(c.source_png, `Original design ${c.sample}`), el("figcaption", {}, "Original, original size")),
+      el("figure", {}, stage(c.stretch_png, `Naive stretch of ${c.sample} to ${c.format}`), el("figcaption", {}, "Naive stretch (starter)")),
+      el("figure", {}, stage(c.output_png, `Our output for ${c.format}`), el("figcaption", {}, "Our engine"))),
     el("table", { "aria-label": "Penalty breakdown (0 = perfect, 1 = worst)" }, el("tbody", {}, ...rows)),
     c.violations.length
       ? el("ul", { class: "violations", "aria-label": "Hard-rule violations" }, ...c.violations.map((v) => el("li", {}, `${v.rule}: ${v.id}`)))

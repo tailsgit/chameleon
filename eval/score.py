@@ -17,6 +17,7 @@ Roles are decided from the SOURCE and carried to the output by id:
   unit        = a group (all members merged) or an ungrouped foreground element
 """
 
+import json
 import math
 from dataclasses import dataclass
 from functools import lru_cache
@@ -25,7 +26,7 @@ from itertools import combinations
 import numpy as np
 from PIL import Image
 
-from eval.check import rotated_bbox, text_layout
+from eval.check import _font_manager, rotated_bbox, text_layout
 from eval.render import ASSETS_DIR
 from renderer.converter.colorutil import parse_rgba
 
@@ -34,7 +35,15 @@ MIN_TEXT_PX_ABS = 12         # never demand less than this (the samples' own fin
 MIN_TEXT_REL_HEIGHT = 0.015  # min readable font size as a fraction of canvas height
 DECORATION_ALPHA = 0.5
 EMPTY_CELL_COVERAGE = 0.02   # a ninth of the canvas with less foreground than this is "empty"
-COVERAGE_LOG_RANGE = math.log(3)  # coverage 3x denser or sparser than source = full penalty
+EMPTY_NINTHS_FREE = 4        # this many empty ninths of the target are fine (margins, breathing room)
+MIN_EXTENT = 0.6             # content should span at least this fraction of the target on each axis
+HEADLINE_LEAD = 1.4          # the headline should look at least this much bigger than any other text...
+                             # ...unless it led by less in the source
+FLOAT_MAX_AREA = 0.1         # a corner-anchored unit smaller than this fraction of the canvas is floating
+FLOAT_CORNER = 0.12          # "anchored" = within this fraction of the canvas side from two adjacent edges
+FLOAT_DRIFT_FULL = 0.3       # drift from its corner of 30% of the canvas side = full penalty
+GAP_FREE, GAP_FULL = 0.1, 0.3  # an empty band between content: free up to 10% of the side, full penalty at 30%
+BALANCE_FULL = 0.25          # content centre this much further off-centre than in the source = full penalty
 NEAR_MISS_REL = 0.02         # edges closer than 2% of the canvas side, but not aligned, are a near miss
 ALIGNED_PX = 1.0
 CONTRAST_MIN, CONTRAST_MIN_LARGE = 4.5, 3.0  # WCAG AA
@@ -91,72 +100,156 @@ def small_text_penalty(c: Ctx):
 
 
 def headline_penalty(c: Ctx):
-    """The source's largest text (by font size, ties by box area) must stay
-    the largest. Penalty = 4 x how much bigger the largest other text is, capped at 1."""
-    texts = [e for e in c.src.values() if e["type"] == "text" and e["id"] in c.out]
+    """The source's visually biggest text must stay clearly the biggest.
+    Visual size = x-height of the drawn font x sqrt(stroke weight / 400), so a
+    14px regular serif no longer "beats" a 13px bold sans. Lead = headline's
+    visual size / the largest other text's. Needed lead = min(HEADLINE_LEAD,
+    source lead); penalty = shortfall from it, 0 at the needed lead, 1 at parity or below."""
+    texts = [i for i, e in c.src.items() if e["type"] == "text" and i in c.out]
     if len(texts) < 2:
         return 0.0, ""
-    head = max(texts, key=lambda e: (e["font_size"], e["width"] * e["height"]))["id"]
-    hfs = int(c.out[head]["font_size"])
-    other_id, other_fs = max(((e["id"], int(c.out[e["id"]]["font_size"])) for e in texts if e["id"] != head),
-                             key=lambda t: t[1])
-    if other_fs <= hfs:
+    vs = {i: _visual_size(c.src[i]) for i in texts}
+    head = max(texts, key=lambda i: (vs[i], c.src[i]["width"] * c.src[i]["height"]))
+    need = min(HEADLINE_LEAD, vs[head] / max(max(v for i, v in vs.items() if i != head), 1e-6))
+    if need <= 1:
         return 0.0, ""
-    return min(1.0, 4 * (other_fs / max(hfs, 1) - 1)), f"{other_id} {other_fs}px > headline {head} {hfs}px"
+    vo = {i: _visual_size(c.out[i]) for i in texts}
+    other = max((i for i in texts if i != head), key=vo.get)
+    lead = vo[head] / max(vo[other], 1e-6)
+    p = min(1.0, max(0.0, (need - lead) / (need - 1)))
+    return p, (f"headline {head} leads {other} by {lead:.2f}x (needs {need:.2f}x)" if p else "")
 
 
 def space_penalty(c: Ctx):
-    """Poor use of space, relative to the source. Half: foreground coverage
-    (union of drawn areas / canvas) drifting from the source's coverage, on a
-    log scale (crowding and emptiness both count). Half: canvas ninths that
-    are empty in the output beyond those empty in the source (3 extra = full)."""
-    cov_s, empty_s = _coverage(c.src_box, c.units, c.sw, c.sh)
-    cov_o, empty_o = _coverage(c.out_box, c.units, c.tw, c.th)
-    p_cov = 0.0 if cov_s == 0 or cov_o == 0 else min(1.0, abs(math.log(cov_o / cov_s)) / COVERAGE_LOG_RANGE)
-    if cov_o == 0 and cov_s > 0:
-        p_cov = 1.0
-    p_empty = min(1.0, max(0, empty_o - empty_s) / 3)
-    return 0.5 * p_cov + 0.5 * p_empty, f"coverage {cov_s:.0%}->{cov_o:.0%}, empty ninths {empty_s}->{empty_o}"
+    """Unused target canvas, regardless of how sparse the source was:
+    - extent (half): the content's bounding box should span MIN_EXTENT of the
+      target on each axis (mean shortfall);
+    - gap (quarter): the widest empty band running right across the content
+      (a hole between a split layout's halves), beyond GAP_FREE of that side;
+    - empty ninths (quarter): ninths of the target with no content, beyond EMPTY_NINTHS_FREE."""
+    box = _content_box(c.out_box, c.units)
+    if box is None:
+        return 0.0, ""
+    fx, fy = (box[2] - box[0]) / c.tw, (box[3] - box[1]) / c.th
+    p_ext = (max(0.0, MIN_EXTENT - fx) + max(0.0, MIN_EXTENT - fy)) / (2 * MIN_EXTENT)
+    boxes = [_unit_box(c.out_box, u) for u in c.units]
+    gap = max(_widest_gap([(b[0], b[2]) for b in boxes]) / c.tw, _widest_gap([(b[1], b[3]) for b in boxes]) / c.th)
+    p_gap = min(1.0, max(0.0, gap - GAP_FREE) / (GAP_FULL - GAP_FREE))
+    _cov, empty = _coverage(c.out_box, c.units, c.tw, c.th)
+    p_empty = max(0, empty - EMPTY_NINTHS_FREE) / (9 - EMPTY_NINTHS_FREE)
+    return (0.5 * p_ext + 0.25 * p_gap + 0.25 * p_empty,
+            f"content spans {fx:.0%} x {fy:.0%} of the canvas, widest inner gap {gap:.0%}, empty ninths {empty}")
+
+
+def balance_penalty(c: Ctx):
+    """Content huddled to one side: how much further the content box's centre
+    sits from the canvas centre (as a fraction of each side, worst axis) than
+    it did in the source. BALANCE_FULL more = full penalty."""
+    bs, bo = _content_box(c.src_box, c.units), _content_box(c.out_box, c.units)
+    if bs is None or bo is None:
+        return 0.0, ""
+    def off(b, w, h):
+        return max(abs((b[0] + b[2]) / 2 / w - 0.5), abs((b[1] + b[3]) / 2 / h - 0.5))
+    o_s, o_o = off(bs, c.sw, c.sh), off(bo, c.tw, c.th)
+    return min(1.0, max(0.0, o_o - o_s) / BALANCE_FULL), f"centre offset {o_s:.0%}->{o_o:.0%}"
+
+
+def floating_penalty(c: Ctx):
+    """Floating elements (badges, ribbons, stamps) belong where they were
+    anchored. A unit is floating when it is small (< FLOAT_MAX_AREA of the
+    source canvas) and either rotated or sits within FLOAT_CORNER of two
+    adjacent source edges. Its drift = change in its gaps to that corner's two
+    edges, as fractions of the canvas sides; penalty = mean drift / FLOAT_DRIFT_FULL."""
+    drifts, moved = [], []
+    for u in c.units:
+        corner = _float_corner(c, u)
+        if corner is None:
+            continue
+        gs = _corner_gaps(_unit_box(c.src_box, u), corner, c.sw, c.sh)
+        go = _corner_gaps(_unit_box(c.out_box, u), corner, c.tw, c.th)
+        d = abs(go[0] - gs[0]) + abs(go[1] - gs[1])
+        drifts.append(min(1.0, d / FLOAT_DRIFT_FULL))
+        if d > 0.05:
+            moved.append(f"{_name(u)} drifted {d:.0%} from {corner}")
+    return (sum(drifts) / len(drifts) if drifts else 0.0), ", ".join(moved)
 
 
 def alignment_penalty(c: Ctx):
-    """Near-miss alignments: a pair of units whose left/centre/right (or
-    top/middle/bottom) differ by more than ALIGNED_PX but less than
-    NEAR_MISS_REL of the canvas side, with no exact alignment on that axis.
-    Penalty = near misses added over the source, per unit, capped at 1."""
+    """Half: near-miss alignments, i.e. a pair of units whose left/centre/right
+    (or top/middle/bottom) differ by more than ALIGNED_PX but less than
+    NEAR_MISS_REL of the canvas side, with no exact alignment on that axis;
+    near misses added over the source, per unit, capped at 1. Half: lost
+    alignments, i.e. pairs aligned in the source (a row of badges, a centred
+    stack) that share no edge or centre on either axis in the output; as a
+    share of the source's aligned pairs (a row may become a column)."""
     n_src = _near_misses(c.src_box, c.units, c.sw, c.sh)
     n_out = _near_misses(c.out_box, c.units, c.tw, c.th)
-    return min(1.0, max(0, n_out - n_src) / max(1, len(c.units))), f"near misses {n_src}->{n_out}"
+    p_near = min(1.0, max(0, n_out - n_src) / max(1, len(c.units)))
+    aligned = [(a, b) for a, b in combinations(c.units, 2)
+               if _aligned(_unit_box(c.src_box, a), _unit_box(c.src_box, b))]
+    lost = [(a, b) for a, b in aligned if not _aligned(_unit_box(c.out_box, a), _unit_box(c.out_box, b))]
+    p_lost = len(lost) / len(aligned) if aligned else 0.0
+    return 0.5 * p_near + 0.5 * p_lost, (f"near misses {n_src}->{n_out}, lost alignments {len(lost)}/{len(aligned)}"
+                                         + "".join(f", {_name(a)}|{_name(b)}" for a, b in lost[:4]))
 
 
 def reading_order_penalty(c: Ctx):
-    """Reading order = rows top to bottom (a unit joins a row when its
-    vertical centre falls inside the row), left to right within a row.
-    Penalty = fraction of unit pairs whose order flipped vs the source (Kendall)."""
-    src_rank = {tuple(u): i for i, u in enumerate(_reading_order(c.src_box, c.units))}
-    out_order = _reading_order(c.out_box, c.units)
-    pairs = list(combinations(out_order, 2))
-    if not pairs:
-        return 0.0, ""
-    flipped = [(a, b) for a, b in pairs if src_rank[tuple(a)] > src_rank[tuple(b)]]
-    return len(flipped) / len(pairs), ", ".join(f"{_name(a)} now before {_name(b)}" for a, b in flipped[:5])
+    """Source reading order = rows top to bottom (a unit joins a row when its
+    vertical centre falls inside the row), left to right within a row. The
+    output may be read either that way or column by column (a unit joins a
+    column when its horizontal centre falls inside it; columns left to right,
+    top to bottom within one), so a side-by-side layout that reads correctly
+    down each column is not punished. Floating units are judged by
+    floating_penalty instead. Penalty = fraction of unit pairs whose order
+    flipped vs the source (Kendall), under the better of the two readings."""
+    units = [u for u in c.units if _float_corner(c, u) is None]
+    src_rank = {tuple(u): i for i, u in enumerate(_reading_order(c.src_box, units))}
+    best = None
+    for order in (_reading_order(c.out_box, units), _reading_order(c.out_box, units, columns=True)):
+        pairs = list(combinations(order, 2))
+        if not pairs:
+            return 0.0, ""
+        flipped = [(a, b) for a, b in pairs if src_rank[tuple(a)] > src_rank[tuple(b)]]
+        if best is None or len(flipped) < len(best[0]):
+            best = flipped, len(pairs)
+    flipped, n = best
+    return len(flipped) / n, ", ".join(f"{_name(a)} now before {_name(b)}" for a, b in flipped[:5])
 
 
 def contrast_penalty(c: Ctx):
-    """(Optional, renders once.) Render the output without its text, then for
+    """(Optional, renders twice.) Render the design without its text, then for
     each text element compare its colour (alpha-composited) with the pixels
     under its drawn lines. Contrast = WCAG ratio against the 10th-percentile
-    worst pixel. Penalty per element = shortfall below 4.5 (3.0 for >=24px or
-    bold >=19px), scaled to 0..1; total = mean."""
+    worst pixel. Only contrast the layout lost counts: the bar is 4.5 (3.0 for
+    >=24px or bold >=19px), or the element's contrast in the source if that
+    was already lower (white on the brand's orange badge is the designer's
+    choice, not ours). Penalty per element = shortfall below the bar, scaled to 0..1; total = mean."""
+    src_ratio = _contrast_ratios(json.dumps(c.source, sort_keys=True))
+    pens, low = [], []
+    for eid, worst in _contrast_ratios(json.dumps(c.output, sort_keys=True)).items():
+        el = c.out[eid]
+        fs = int(el["font_size"])
+        need = CONTRAST_MIN_LARGE if fs >= 24 or (el.get("font_weight") == "bold" and fs >= 19) else CONTRAST_MIN
+        need = min(need, src_ratio.get(eid, need))
+        pens.append(max(0.0, min(1.0, (need - worst) / max(need - 1, 1e-6))))
+        if worst < need:
+            low.append(f"{eid} {worst:.1f}:1 (source {src_ratio.get(eid, float('nan')):.1f}:1)")
+    return (sum(pens) / len(pens) if pens else 0.0), ", ".join(low)
+
+
+@lru_cache(maxsize=8)  # the engine scores many candidates against one source: render it once
+def _contrast_ratios(design_json):
+    """{text id: 10th-percentile WCAG ratio of its colour against what is drawn under its lines}."""
     from eval.render import render_image, render_scale
 
-    no_text = {"canvas": c.output["canvas"], "elements": [e for e in c.output["elements"] if e["type"] != "text"]}
+    design = json.loads(design_json)
+    no_text = {"canvas": design["canvas"], "elements": [e for e in design["elements"] if e["type"] != "text"]}
     img = np.asarray(render_image(no_text), dtype=np.float64) / 255
-    s = render_scale(c.output)
+    s = render_scale(design)
     lum = _rel_luminance(img)
-    pens, low = [], []
-    for eid, el in c.out.items():
-        if el["type"] != "text":
+    out = {}
+    for el in design["elements"]:
+        if el["type"] != "text" or el.get("id") in out:
             continue
         x0, y0, x1, y1 = (int(round(v * s)) for v in _drawn_box(el))
         x0, y0 = max(x0, 0), max(y0, 0)
@@ -168,23 +261,20 @@ def contrast_penalty(c: Ctx):
         fg = a * np.array([r, g, b]) / 255 + (1 - a) * bg
         lf, lb = _rel_luminance(fg), lum[y0:y1, x0:x1].reshape(-1)
         ratio = (np.maximum(lf, lb) + 0.05) / (np.minimum(lf, lb) + 0.05)
-        worst = float(np.percentile(ratio, 10))
-        fs = int(el["font_size"])
-        need = CONTRAST_MIN_LARGE if fs >= 24 or (el.get("font_weight") == "bold" and fs >= 19) else CONTRAST_MIN
-        pens.append(max(0.0, min(1.0, (need - worst) / (need - 1))))
-        if worst < need:
-            low.append(f"{eid} {worst:.1f}:1")
-    return (sum(pens) / len(pens) if pens else 0.0), ", ".join(low)
+        out[el["id"]] = float(np.percentile(ratio, 10))
+    return out
 
 
-PENALTIES = {  # name: (function, weight, needs_render)
-    "overlap": (overlap_penalty, 3.0, False),
-    "small_text": (small_text_penalty, 3.0, False),
-    "headline": (headline_penalty, 1.5, False),
-    "space": (space_penalty, 1.5, False),
-    "alignment": (alignment_penalty, 1.0, False),
-    "reading_order": (reading_order_penalty, 1.0, False),
-    "contrast": (contrast_penalty, 2.0, True),
+PENALTIES = {  # name: (function, weight, needs_render). Weights fitted to the hand labels: python -m eval.calibrate --fit
+    "overlap": (overlap_penalty, 0.5, False),
+    "small_text": (small_text_penalty, 1.5, False),
+    "headline": (headline_penalty, 1.2, False),
+    "space": (space_penalty, 2.6, False),
+    "balance": (balance_penalty, 1.5, False),
+    "floating": (floating_penalty, 1.2, False),
+    "alignment": (alignment_penalty, 0.5, False),
+    "reading_order": (reading_order_penalty, 0.5, False),
+    "contrast": (contrast_penalty, 0.5, True),
 }
 
 
@@ -300,17 +390,79 @@ def _near_misses(boxes_by_id, units, cw, ch):
     return n
 
 
-def _reading_order(boxes_by_id, units):
-    items = sorted(((_unit_box(boxes_by_id, u), u) for u in units), key=lambda t: t[0][1])
+def _reading_order(boxes_by_id, units, columns=False):
+    """Rows top to bottom, left to right within a row; or with columns=True,
+    the same with the axes swapped."""
+    lo, hi = (0, 2) if columns else (1, 3)
+    items = sorted(((_unit_box(boxes_by_id, u), u) for u in units), key=lambda t: t[0][lo])
     rows = []
     for box, u in items:
-        cy = (box[1] + box[3]) / 2
-        if rows and rows[-1]["top"] <= cy <= rows[-1]["bottom"]:
+        mid = (box[lo] + box[hi]) / 2
+        if rows and rows[-1]["top"] <= mid <= rows[-1]["bottom"]:
             rows[-1]["items"].append((box, u))
-            rows[-1]["bottom"] = max(rows[-1]["bottom"], box[3])
+            rows[-1]["bottom"] = max(rows[-1]["bottom"], box[hi])
         else:
-            rows.append({"top": box[1], "bottom": box[3], "items": [(box, u)]})
-    return [u for row in rows for _box, u in sorted(row["items"], key=lambda t: t[0][0])]
+            rows.append({"top": box[lo], "bottom": box[hi], "items": [(box, u)]})
+    return [u for row in rows for _box, u in sorted(row["items"], key=lambda t: t[0][1 - lo])]
+
+
+def _aligned(a, b):
+    """Share a left, centre or right edge, or a top, middle or bottom edge (within ALIGNED_PX)."""
+    return any(abs(a[lo] - b[lo]) <= ALIGNED_PX or abs(a[hi] - b[hi]) <= ALIGNED_PX
+               or abs((a[lo] + a[hi]) - (b[lo] + b[hi])) / 2 <= ALIGNED_PX for lo, hi in ((0, 2), (1, 3)))
+
+
+def _widest_gap(spans):
+    """Widest stretch between the first start and the last end that no span covers."""
+    spans = sorted(spans)
+    gap, reach = 0.0, spans[0][1] if spans else 0.0
+    for lo, hi in spans[1:]:
+        gap = max(gap, lo - reach)
+        reach = max(reach, hi)
+    return gap
+
+
+def _content_box(boxes_by_id, units):
+    boxes = [_unit_box(boxes_by_id, u) for u in units]
+    if not boxes:
+        return None
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
+def _float_corner(c, unit):
+    """'top-left' etc. if the unit floats in the source (see floating_penalty), else None."""
+    b = _unit_box(c.src_box, unit)
+    if _area(b) >= FLOAT_MAX_AREA * c.sw * c.sh:
+        return None
+    left, right = b[0] <= FLOAT_CORNER * c.sw, b[2] >= (1 - FLOAT_CORNER) * c.sw
+    top, bottom = b[1] <= FLOAT_CORNER * c.sh, b[3] >= (1 - FLOAT_CORNER) * c.sh
+    rotated = any(c.src[i].get("rotation", 0) for i in unit)
+    if left == right or top == bottom:  # spans the canvas, or not at an edge: only a rotated unit floats
+        if not rotated:
+            return None
+        cx, cy = (b[0] + b[2]) / 2 / c.sw, (b[1] + b[3]) / 2 / c.sh
+        left, top = cx < 0.5, cy < 0.5
+    return ("top" if top else "bottom") + "-" + ("left" if left else "right")
+
+
+def _corner_gaps(b, corner, w, h):
+    gx = b[0] / w if corner.endswith("left") else (w - b[2]) / w
+    gy = b[1] / h if corner.startswith("top") else (h - b[3]) / h
+    return gx, gy
+
+
+@lru_cache(maxsize=256)
+def _font_metrics(family, bold, size):
+    import skia
+    style = "bold" if bold else "regular"
+    tf = skia.Typeface.MakeFromData(_font_manager().lookup(family, style, style))
+    return skia.Font(tf, size).getMetrics().fXHeight, tf.fontStyle().weight()
+
+
+def _visual_size(el):
+    """How big a text looks: x-height at the size the renderer draws, times sqrt(weight / 400)."""
+    xh, weight = _font_metrics(el["font_family"], el.get("font_weight") == "bold", int(el["font_size"]))
+    return xh * math.sqrt(max(weight, 100) / 400)
 
 
 def _rel_luminance(rgb):

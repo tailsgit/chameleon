@@ -2,7 +2,8 @@
 
 See engine/analyze.py, recipes.py, fit.py and select.py. resize() never raises:
 when the pipeline fails it falls back to a repaired uniform scale, and failing
-that, to a repaired stretch.
+that, to a repaired stretch. When the aspect ratio barely changes, the uniform
+scale is also the preferred candidate: the designer's layout already fits.
 """
 
 import copy
@@ -14,6 +15,7 @@ from engine.fit import realize
 from engine.recipes import generate
 from engine.select import fallback, repair, select
 
+SAME_ASPECT = 0.02  # relative aspect-ratio change below which the source layout is kept as is
 log = logging.getLogger(__name__)
 
 
@@ -27,8 +29,12 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                 outputs.append(realize(a, plan, target["width"], target["height"]))
             except Exception:
                 log.exception("recipe %s %s failed", plan.recipe, plan.knobs)
-        if outputs:
-            return select(source, target, outputs)
+        preferred = None
+        sa = source["canvas"]["width"] / source["canvas"]["height"]
+        if abs(target["width"] / target["height"] / sa - 1) <= SAME_ASPECT:
+            preferred = fallback(source, target)
+        if outputs or preferred is not None:
+            return select(source, target, outputs, preferred)
         log.warning("no candidates; using fallback")
     except Exception:
         log.exception("engine failed; using fallback")

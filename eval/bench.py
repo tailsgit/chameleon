@@ -5,7 +5,8 @@
     python -m eval.bench --contrast   # also the render-based contrast penalty
 
 Writes eval/results/summary.md, eval/results/cases.csv and, with --render,
-eval/results/renders/*.png + eval/results/contact_sheet.png.
+eval/results/renders/*.png (each case, plus source__<sample>.png and the starter's
+naive stretch as stretch__<case>.png, for the review page) + eval/results/contact_sheet.png.
 """
 
 import argparse
@@ -22,6 +23,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from engine.resize import resize
+from eval.baseline import stretch
 from eval.check import check, text_layout
 from eval.score import PENALTIES, score
 
@@ -77,6 +79,7 @@ def run(render=False, contrast=False, out_dir=REPO / "eval" / "results"):
                 img = render_image(output)
                 row["render_ms"] = (time.perf_counter() - t) * 1000
                 img.save(out_dir / "renders" / f"{case}.png")
+                render_image(stretch(task["source"], target)).save(out_dir / "renders" / f"stretch__{case}.png")
                 thumbs.append((sample, fmt["name"], img, row))
             rows.append(row)
 
