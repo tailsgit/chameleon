@@ -651,3 +651,59 @@ Agreement with the labels held: pairwise 0.892, AUC 1.00 (unchanged).
   - Big photos that don't fill the canvas are not treated as background: they shrink, and text shrinks with them on wide banners.
   - Multi-column grid designs (storyboards, menus) collapse into one long column.
   - `floating` (0.40) and `scale` (0.25) are the largest mean penalties.
+
+## 18. Crello fixes, measured on crello-dev
+
+### Agreement with the Crello labels (worst 30)
+- Before this round: pairwise 0.806, good-vs-bad 0.80; the samples are at 0.868 / 0.953.
+- **Where it agrees:** all 19 passing cases scoring under 78.5 were labelled bad.
+- **Where it disagrees:** on the 11 cases that broke a hard rule. They scored 79–98 because the score ignores rules (e.g. an unfilled background still scored 94–96).
+- **New check:** "text leaves its card" (`holders`), added because of these labels. It raises Crello agreement to 0.829 / 0.88 and leaves the samples unchanged.
+- **Caveat:** only 1 of the 30 is labelled good.
+
+### Fixes (general rules, no design ids)
+1. **Rule lines and turned backgrounds.**
+   - Any non-text element at most 4px thick and 10× longer is a decoration. It is never pulled into a group, and is placed at least 1.5px thick when that still fits the canvas.
+   - Backgrounds turned by a multiple of 90° are recognised. At 180° they fill the canvas.
+   - At 90°/270° on a non-square canvas, filling would push the unrotated box off the canvas (the official self-check tests the box). So they fill the centred square, and our checker no longer asks the impossible.
+   - The converter snaps rotations within 0.5° of a right angle.
+2. **Text on images.** An image holds the text on it as one rigid group when it is:
+   - compact (at most 4:1), and
+   - under 20% of the canvas, or under 50% and flat (RGB std < 25: a card or bubble, not a photo).
+
+   A photo inside a frame image is also one group. The thresholds were measured against the 50% limit first tried, which turned photos with a headline on them into rigid "cards" (−1.26).
+3. **Big hero.** A photo covering at least 25% of the design gets the `anchor` recipe:
+   - it keeps its share of the canvas, flush against one edge (at most 65% of the width or height);
+   - the text is a column in the space left;
+   - the photo is never demoted.
+
+   An image-only group (a photo in a frame) now counts as an image for roles. Before, it fell through to a floating "decoration".
+4. **Grids.** A grid needs at least 4 similar image units (width and height within 15%) on a lattice of at least 2×2.
+   - The other units join the cell whose band they fall in. A band starts or ends at its photo, whichever gives the most even cells.
+   - Each cell becomes rigid and the grid becomes one unit. It can re-flow to any column count, taking the shape closest to the canvas first.
+
+### Results (crello-dev, 600 cases; "before" is engine d7352fe on the same conversion and scorer)
+
+| | pass | average |
+|---|---|---|
+| before | 589 | 87.28 |
+| after | 592 | 89.72 |
+
+Leave-one-out (the score without each fix; full set 89.72):
+
+| without | average | worth |
+|---|---|---|
+| image cards | 87.29 | +2.43 |
+| frames | 89.62 | +0.10 |
+| grids | 89.72 | 0 |
+| anchor | 89.44 | +0.28 |
+
+- **Grids** touch only 4 designs (11 cases: 5 better, 6 worse by the scorer). The storyboard is clearly better by eye.
+- **Anchor:** 115 cases better, 2 worse.
+- **Remaining failures:** 8 cases (13 elements), all `hidden_element`. 11 of the 13 are hairlines that can't be ≥ 1px within the canvas without breaking their proportions. The other 2 are thin parts of a larger group squeezed into a 90px leaderboard.
+- **Holdout (run once):** 295/300 (98.3%), average 89.39, against dev's 98.7% / 89.72. No sign of overfitting. All 12 of its hidden elements are the impossible-in-proportion kind.
+- **Samples:** outputs identical (0 of 45 changed), 96.15 under the current scorer.
+- **Synthetic:** 299/300, 0 crashes; same as before.
+- **Still poor by eye:**
+  - A tall text column on a wide banner shrinks to unreadable; it needs multi-column text flow.
+  - A large flat card (86% of the Love poster) still ends up empty beside its photo.
