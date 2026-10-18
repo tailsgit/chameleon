@@ -107,7 +107,7 @@ def run(suite="samples", render=False, contrast=False, jobs=1, out_dir=None):
 
 class _Count(logging.Handler):
     def __init__(self):
-        super().__init__(logging.WARNING)
+        super().__init__(logging.INFO)
         self.records = []
 
     def emit(self, record):
@@ -120,6 +120,7 @@ def _one(job):
     row = {"case": case, "sample": sample, "format": fmt, "width": target["width"], "height": target["height"]}
     log = _Count()
     logging.getLogger("engine").addHandler(log)
+    logging.getLogger("engine").setLevel(logging.INFO)  # for the "winner: <recipe>" line
     try:
         t = time.perf_counter()
         output = resize(copy.deepcopy(source), target)
@@ -130,6 +131,7 @@ def _one(job):
     finally:
         logging.getLogger("engine").removeHandler(log)
     msgs = [r.getMessage() for r in log.records]
+    row["winner"] = next((m.split(": ", 1)[1] for m in msgs if m.startswith("winner: ")), "")
     row["fallback"] = sum("fallback" in m for m in msgs)
     row["candidate_errors"] = sum("failed" in m and "fallback" not in m for m in msgs)
     errs = [f"{r.exc_info[0].__name__}: {r.exc_info[1]}"[:200] for r in log.records if r.exc_info]
@@ -167,7 +169,7 @@ def _warm_up(render=False):
 
 def _write_csv(rows, path):
     cols = ["case", "sample", "format", "width", "height", "passed", "violations", "total",
-            *PENALTIES, "rules", "fallback", "candidate_errors", "resize_ms", "check_ms", "score_ms", "render_ms", "error"]
+            *PENALTIES, "rules", "winner", "fallback", "candidate_errors", "resize_ms", "check_ms", "score_ms", "render_ms", "error"]
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()

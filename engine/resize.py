@@ -23,13 +23,14 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
     target = {"width": int(target_canvas["width"]), "height": int(target_canvas["height"])}
     try:
         a = analyze(source)
-        outputs = []
+        outputs, recipes = [], []
         for plan in generate(a, target["width"], target["height"]):
             # stand-out floating units: centred in their free space, or near their source side; the scorer picks
             focal = (True, False) if any(a.units[u].emphasis for u in plan.floating) else (True,)
             for f in focal:
                 try:
                     outputs.append(realize(a, plan, target["width"], target["height"], focal=f))
+                    recipes.append(plan.recipe)
                 except Exception:
                     log.exception("recipe %s %s failed", plan.recipe, plan.knobs)
         preferred = None
@@ -37,7 +38,10 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
         if abs(target["width"] / target["height"] / sa - 1) <= SAME_ASPECT:
             preferred = fallback(source, target)
         if outputs or preferred is not None:
-            return select(source, target, outputs, preferred)
+            best = select(source, target, outputs, preferred)
+            log.info("winner: %s", next((r for o, r in zip(outputs, recipes) if o is best),
+                                        "uniform" if best is preferred else "repaired"))
+            return best
         log.warning("no candidates; using fallback")
     except Exception:
         log.exception("engine failed; using fallback")

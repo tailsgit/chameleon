@@ -18,6 +18,7 @@ Recipes:
   anchor   a big hero (>= 25% of the design) keeps its share of the canvas, flush against
            one edge; everything else is a column in the space left (text fits around the
            photo instead of both shrinking together).
+  retrieved  layouts of real designs of a similar shape and composition (engine.retrieve)
 """
 
 import math
@@ -29,6 +30,7 @@ from PIL import Image
 
 from engine.analyze import PRIMARY_ROLES
 from engine.fit import Sizer
+from engine.retrieve import retrieved
 from eval.render import assets_dir
 
 GAP = 0.03          # vertical gap between rows, fraction of the column's shorter side
@@ -103,7 +105,7 @@ def generate(a, tw, th):
                 add(strip, "compact", hero_pos="left", img_mult=1.0, align=align, cap=cap, primaries_only=True)
             else:
                 add(stack, "compact", align=align, vjust="spread", img_mult=1.0, cap=cap, order="source", primaries_only=True)
-    return plans
+    return plans + retrieved(a, sizer, tw, th)
 
 
 # --- recipes ------------------------------------------------------------------

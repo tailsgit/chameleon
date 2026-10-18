@@ -51,6 +51,8 @@ def load_cases():
             "output_png": f"/renders/{r['case']}.png" if (RENDERS / f"{r['case']}.png").is_file() else None,
             "source_png": f"/renders/source__{r['sample']}.png" if (RENDERS / f"source__{r['sample']}.png").is_file() else None,
             "stretch_png": f"/renders/stretch__{r['case']}.png" if (RENDERS / f"stretch__{r['case']}.png").is_file() else None,
+            # a comparison folder can render an earlier engine's output instead of the stretch
+            "before_png": f"/renders/before__{r['case']}.png" if (RENDERS / f"before__{r['case']}.png").is_file() else None,
         })
     if WORST:
         cases = sorted(cases, key=lambda c: (c["passed"], c["total"]))[:WORST]

@@ -134,11 +134,13 @@ def test_a_tall_stack_of_texts_flows_into_columns_on_a_wide_banner():
 
 def test_an_oversized_panel_fits_around_its_text():
     panel = {"id": "panel", "type": "shape", "x": 60, "y": 60, "width": 960, "height": 960,
-             "shape": "rectangle", "fill": "rgba(255,255,255,1)"}
+             "shape_type": "rectangle", "fill_color": "rgba(255,255,255,1)"}
     src = design(1080, 1080, [panel, text("h", 140, 140, 800, 120, "A short title", fs=80)])
     assert "panel" in analyze(src).panels
     target = {"width": 1920, "height": 1080}
-    out = {e["id"]: e for e in resize(src, target)["elements"]}
+    res = resize(src, target)
+    assert check(src, target, res) == []
+    out = {e["id"]: e for e in res["elements"]}
     p, h = out["panel"], out["h"]
     assert p["x"] <= h["x"] and p["y"] <= h["y"]  # still behind its text...
     assert p["width"] * p["height"] < 0.5 * 1920 * 1080  # ...but no longer a mostly empty square

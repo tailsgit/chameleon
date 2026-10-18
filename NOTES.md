@@ -305,7 +305,10 @@ The baseline scales x and width by `tw/sw`, y and height by `th/sh`, and font si
    ribbon's rotated corner) are pulled **fully inside** in our output. We check both the
    unrotated box (`off_canvas`) and the rotated bounding box (`off_canvas_rotated`).
 3. **Crello is used only to learn from**: geometry and roles only, never pixels or text.
-   Nothing from Crello is committed to the repo or baked into the Docker image.
+   Since §20 (branch `retrieval`), one derived file ships in the repo and the image:
+   `engine/data/layout_library.json`, which holds normalised unit boxes, roles and aspect ratios only,
+   with no text, pixels, asset ids or Crello ids. §8 judged this form the low-risk one, but it is
+   still worth confirming with the organisers before it is submitted.
 4. **No model for now.** Any future model must be small (target well under 100M parameters).
 5. **Rendering is expensive**, because scoring may run under amd64 emulation. The engine ranks
    most candidate layouts geometrically (`eval/score.py`, ~1 ms) and renders only the top few.
@@ -762,3 +765,47 @@ Leave-one-out (the score without each fix; full set 89.72):
   - Docker's outputs pass natively (45/45, 95.83 scored natively);
   - each platform's own outputs score 96.26 (native) and 96.15 (Docker).
 - **Docker Desktop's disk image** is now on the external drive, which is exFAT: no sparse files, so `Docker.raw` takes its full size (228 GB).
+
+## 20. Layout library and retrieval (branch `retrieval`)
+
+### Library (`eval/build_library.py` -> `engine/data/layout_library.json`)
+- **Contents:** our analyzer runs on every converted Crello design outside crello-dev and crello-holdout, giving **1,494 layouts** (9,836 units) in **0.77 MB**.
+- **Per layout:** the aspect ratio; per unit, its role, kind (text/image/rigid) and box as fractions of the canvas; role counts.
+- **Left out:** text, pixels and ids. The list is ordered by aspect.
+- **Coverage:** every dev and holdout target has at least one layout within the aspect tolerance; 115 of 600 dev targets have fewer than 30.
+
+### Retrieval (`engine/retrieve.py`)
+- **Selection:** library layouts within |ln aspect| <= 0.2 of the target, ranked by role-count L1 distance to ours (ties go to the closer aspect). The top 30 are used.
+- **Mapping:** our flow units go to their slots by a minimum-cost assignment (Hungarian, numpy only, tested against brute force).
+  - The cost adds role (same 0, same family 0.6, other 1.5), kind (text into a non-text slot +1), size (0.5 |ln area-share ratio|) and, for fixed-aspect units, 0.5 |ln aspect ratio|.
+  - A unit whose best slot costs more than 2.5 goes to free space (engine.fit's floating placement); unused slots are ignored.
+  - **Never into a slot where it would be unreadable:** text that can't fit a slot at its readable size, or a group whose text would fall below readable size there.
+- **Sizing inside a slot:** the same Sizer as the recipes, with the same scale caps (`k_cap(1.2)`, 1.4x that for images). Without the caps a short title grew 3.2x into a big headline slot.
+- **Selection:** unchanged. `resize` logs `winner: <recipe>` at INFO, and `eval.bench` records it in a new `winner` column.
+- **Panel fix found on the way:** `place_panel` now uses an even padding (the source's tightest side) scaled like the content's own scale (font or width ratio).
+  - Before, it kept each side's padding scaled by the content's area, so a title at the top of a big panel kept the empty bottom.
+  - Neutral on dev: 89.85 -> 89.85, 27 cases better and 31 worse.
+  - The panel test from §19 had an invalid shape (`shape`/`fill` instead of `shape_type`/`fill_color`), so every candidate failed `missing_field`. It passed only via the repair path; it is fixed now.
+- **Speed:** the first version took 265 s on one case, because the slot-feasibility test measured text the slow way (font stepped down 1px at a time, plus a 40-width search for letter-spaced text). It is now a direct "fits at readable size" test.
+
+### Results
+
+| | v1-submittable | + retrieval |
+|---|---|---|
+| crello-dev pass | 592/600 | 592/600 |
+| crello-dev average | 89.85 | **91.31** |
+| crello-holdout pass (run once) | 295/300 | 295/300 |
+| crello-holdout average | 89.55 | **90.88** |
+| samples | 45/45, 96.26 | 45/45, 96.57 |
+| synthetic | 299/300 | 299/300 |
+
+- **How often retrieval wins:** dev 263/600 (44%, in 144 of 200 designs; on those cases 254 better, 9 worse). Holdout 141/300 (47%; against v1, 146 cases better and 7 worse).
+- **Runtime per case** (native, 8 workers in parallel):
+  - dev: median 4.1 s -> 5.8 s, mean 5.2 -> 6.9 s, p95 12.9 -> 17.4 s, max 30.2 -> 32.7 s;
+  - holdout max 58 s.
+- **By eye (not by score):** the top 8 changed cases are mixed.
+  - Better: Sangria x2, the storyboard, "Best value".
+  - Worse: the Beauty email header (headline shrinks to a corner), the Health Matters banner (photo nearly gone, logo block dominates), the apartment poster (photo a sliver beside an empty panel).
+  - Mixed: one.
+
+  The scorer calls 29 of the top 30 better (+3.69 on average). Its verdict on retrieved layouts needs hand labels before we trust it. The 30 are on the review page (`eval/results/crello-retrieval-review`, middle column = same engine without retrieval).
