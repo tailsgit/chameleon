@@ -246,3 +246,11 @@ def test_restacked_siblings_cost_less_than_split_ones():
         for part in ("_bg", "_label"):
             el(o, "badge3" + part)["y"] -= 900
     assert pen(stack) == 0.25 and pen(scatter) == 0.5
+
+
+def test_text_leaving_its_button_is_penalised():
+    assert _mutated(lambda o: None)["holders"]["penalty"] == 0
+    def move_label(o):  # the CTA label leaves its pill
+        el(o, "cta_label")["y"] -= 300
+    pen = _mutated(move_label)["holders"]
+    assert pen["penalty"] > 0.2 and "cta_label off cta_bg" in pen["detail"]

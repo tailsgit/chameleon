@@ -18,7 +18,9 @@ means every rule we can check passed. Rules (see NOTES.md sections 2 and 9):
   off_canvas_rotated   box is inside, but its rotated bounding box is not
   image_aspect         non-cover image box aspect differs from source box aspect by > 5%
   background_not_full_canvas
-                       a cover image that filled the source canvas doesn't fill the output (our assumption)
+                       a cover image that filled the source canvas doesn't fill the output (our assumption;
+                       not asked of one turned 90/270 degrees on a non-square canvas, which can't without
+                       its box going off the canvas)
   text_overflow_height / text_overflow_width
                        wrapped text, laid out exactly as the renderer draws it, exceeds its box
 """
@@ -100,7 +102,10 @@ def check(source: dict, target_canvas: dict, output: Any) -> list[dict]:
             elif _outside(rbox, cw, ch):
                 add(eid, "off_canvas_rotated", f"rotated bbox {_fmt(rbox)} outside {cw}x{ch}")
 
-            if (el.get("type") == "image" and el.get("fit", "contain") == "cover"
+            # a background turned 90/270 degrees can't fill a non-square canvas with its box on it
+            # (official off-canvas rule): only the centred square is possible, so that is all we ask
+            quarter = round((el.get("rotation", 0) or 0) / 90) % 2 == 1 and cw != ch
+            if (el.get("type") == "image" and el.get("fit", "contain") == "cover" and not quarter
                     and _fills(src, source["canvas"]["width"], source["canvas"]["height"])
                     and not _fills(el, cw, ch)):
                 add(eid, "background_not_full_canvas", f"box {_fmt(box)} on {cw}x{ch}")

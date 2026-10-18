@@ -152,23 +152,27 @@ class Sizer:
                 break
         s, cols, w, h = best
         # contain images are letterboxed: what is drawn can start well inside the box
-        inset = min(_drawn_box(self.a.els[m])[0] for m in u.members) - u.box[0] if cols == len(u.parts) or not u.parts else 0.0
+        inset = min(_drawn_box(self.a.els[m])[0] for m in u.members) - u.box[0] if not u.parts or cols == (u.cols or len(u.parts)) else 0.0
         return Extent(w * s, h * s, scale=s, inset=max(0.0, inset * s), cols=cols if u.parts else None)
 
     def arrangements(self, u):
         """Ways to lay out a unit, in order of preference: [(cols, w, h, origins)], origins mapping
         each member to its top-left offset (source px) from the unit's top-left. Plain units have
         one, as designed. A sibling row has its source row, then grids of fewer columns down to a
-        single stack: same gaps as the row, each grid row centred."""
+        single stack: same gaps as the row, each grid row centred. A grid (u.cols) has every
+        column count, ordered by how close its shape is to the canvas's."""
         key = ("arr", u.id)
         if key in self._lay:
             return self._lay[key]
         els = self.a.els
-        row = [(len(u.parts) or None, u.w, u.h, {m: (els[m]["x"] - u.box[0], els[m]["y"] - u.box[1]) for m in u.members})]
+        src_cols = (u.cols or len(u.parts)) or None
+        row = [(src_cols, u.w, u.h, {m: (els[m]["x"] - u.box[0], els[m]["y"] - u.box[1]) for m in u.members})]
         boxes = [b for _m, b in u.parts]
-        gaps = [max(0.0, b[0] - a[2]) for a, b in zip(boxes, boxes[1:])]
+        gaps = [max(0.0, b[0] - a[2]) for a, b in zip(boxes, boxes[1:]) if b[0] > a[0]]  # side by side in the source
         gap = sum(gaps) / len(gaps) if gaps else 0.0
-        for cols in range(len(u.parts) - 1, 0, -1):
+        n = len(u.parts)
+        # a sibling row: fewer columns, down to a stack; a grid: any other column count
+        for cols in (range(n - 1, 0, -1) if not u.cols else [c for c in range(1, n + 1) if c != u.cols]):
             chunks = [u.parts[i:i + cols] for i in range(0, len(u.parts), cols)]
             widths = [sum(b[2] - b[0] for _m, b in c) + gap * (len(c) - 1) for c in chunks]
             heights = [max(b[3] - b[1] for _m, b in c) for c in chunks]
@@ -182,6 +186,9 @@ class Sizer:
                     x += b[2] - b[0] + gap
                 y += ch + gap
             row.append((cols, W, H, origins))
+        if u.cols:  # a grid takes the shape closest to the canvas first (the source's on ties)
+            want = math.log(self.tw / self.th)
+            row.sort(key=lambda r: round(abs(math.log(r[1] / max(r[2], 1e-6)) - want), 2))
         self._lay[key] = row
         return row
 
@@ -225,7 +232,16 @@ def realize(a, plan, tw, th, focal=True):
 
 
 def place_background(el, tw, th):
-    if el["type"] == "image" and el.get("fit", "contain") != "cover":
+    """Fill the canvas. Turned a quarter (90/270 degrees), the box's width and height swap on screen,
+    and both the box and its rotated bounds must stay on the canvas: that allows at most a centred
+    min(tw, th) square, so a quarter-turned background fills only that on a non-square canvas."""
+    from engine.analyze import quarter_turns
+    if quarter_turns(el) in (1, 3):
+        m = min(tw, th)
+        s = m / max(el["width"], el["height"]) if el["type"] == "image" and el.get("fit", "contain") != "cover" else None
+        w, h = (el["width"] * s, el["height"] * s) if s else (m, m)
+        el.update(x=(tw - w) / 2, y=(th - h) / 2, width=w, height=h)
+    elif el["type"] == "image" and el.get("fit", "contain") != "cover":
         s = min(tw / el["width"], th / el["height"])
         w, h = el["width"] * s, el["height"] * s
         el.update(x=(tw - w) / 2, y=(th - h) / 2, width=w, height=h)
@@ -366,6 +382,8 @@ def _union_boxes(boxes):
 def place_decoration(out, sizer, a, d, tw, th):
     s = math.sqrt(tw * th / (a.sw * a.sh))
     s = min(s, 0.95 * tw / max(d.w, 1e-6), 0.95 * th / max(d.h, 1e-6))
+    # thin lines stay visible: at least MIN_DIM thick when that still fits the canvas, else as thick as fits
+    s = min(max(s, sizer.floor_scale(d)), tw / max(d.w, 1e-6), th / max(d.h, 1e-6))
     ax, ay = a.anchor(d)
     w, h = d.w * s, d.h * s
     place_rigid(out, sizer, a, d, s, _clamp(ax * tw - w / 2, 0, tw - w), _clamp(ay * th - h / 2, 0, th - h))

@@ -15,6 +15,9 @@ Recipes:
   overlay  a stack confined to the quietest part of the background image
   compact  stack or strip with only the primary units (headline, CTA, logo, hero) in
            flow; everything else floats into leftover space. For tiny canvases.
+  anchor   a big hero (>= 25% of the design) keeps its share of the canvas, flush against
+           one edge; everything else is a column in the space left (text fits around the
+           photo instead of both shrinking together).
 """
 
 import math
@@ -31,6 +34,8 @@ from eval.render import assets_dir
 GAP = 0.03          # vertical gap between rows, fraction of the column's shorter side
 H_GAP = 0.03        # horizontal gap between strip cells, fraction of the canvas width
 BISECT_STEPS = 16
+HERO_SHARE = 0.25   # a hero covering this share of the source canvas gets the anchor recipe
+HERO_SIDE_MAX = 0.65  # ...and at most this share of the target's width (or height) in it
 
 
 @dataclass
@@ -79,6 +84,11 @@ def generate(a, tw, th):
     if has_hero and aspect >= 0.9:
         for side, ratio, align, vjust in product(("left", "right"), (0.4, 0.55), ("center", "left"), ("spread", "center")):
             add(split, "split", side=side, ratio=ratio, align=align, vjust=vjust, cap=1.0)
+    if has_hero and big_hero(a):
+        sides = [x for x, ok in (("left", aspect >= 0.8), ("right", aspect >= 0.8), ("top", aspect <= 1.25),
+                                 ("bottom", aspect <= 1.25)) if ok]
+        for side, align, cap in product(sides, ("center", "left"), (1.0, 1.2)):
+            add(anchor, "anchor", side=side, align=align, cap=cap)
     if aspect >= 2.0:
         for hero_pos, img, align, cap in product(("left", "right"), (0.8, 1.0), ("center", "left"), (0.9, 1.2)):
             add(strip, "strip", hero_pos=hero_pos, img_mult=img, align=align, cap=cap)
@@ -123,6 +133,37 @@ def split(a, sizer, tw, th, side, ratio, align, vjust, cap):
     slots, k, demoted = solve_column(a, sizer, rows, (text_x0, m, text_x0 + text_w, th - m),
                                      k_cap(a, tw, th, cap), align, vjust, 1.0)
     return Plan("", {}, [hero_slot] + slots, floating + demoted, k, m)
+
+
+def big_hero(a):
+    """A photo covering HERO_SHARE of the design is its main visual, worth its own space."""
+    hero = a.by_role("hero")
+    return hero is not None and hero.w * hero.h >= HERO_SHARE * a.sw * a.sh
+
+
+def anchor(a, sizer, tw, th, side, align, cap):
+    """The hero keeps the share of the canvas it had (as large as fits that side, up to
+    HERO_SIDE_MAX of the canvas width or height), flush against one canvas edge; the
+    rest of the design is a column in the space left."""
+    m = margin(tw, th)
+    hero = a.by_role("hero")
+    share = hero.w * hero.h / (a.sw * a.sh)
+    s = math.sqrt(share * tw * th / (hero.w * hero.h))
+    if side in ("left", "right"):
+        s = min(s, th / hero.h, HERO_SIDE_MAX * tw / hero.w)
+    else:
+        s = min(s, tw / hero.w, HERO_SIDE_MAX * th / hero.h)
+    w, h = hero.w * s, hero.h * s
+    x = 0.0 if side == "left" else tw - w if side == "right" else (tw - w) / 2
+    y = 0.0 if side == "top" else th - h if side == "bottom" else (th - h) / 2
+    box = {"left": (w + m, m, tw - m, th - m), "right": (m, m, tw - w - m, th - m),
+           "top": (m, h + m, tw - m, th - m), "bottom": (m, m, tw - m, th - h - m)}[side]
+    if box[2] - box[0] < 0.2 * tw or box[3] - box[1] < 0.2 * th:
+        return None
+    rows, floating = flow(a, False)
+    rows = [[u for u in r if u != hero.id] for r in rows]
+    slots, k, demoted = solve_column(a, sizer, rows, box, k_cap(a, tw, th, cap), align, "center", 1.0)
+    return Plan("", {}, [Slot(hero.id, x, y, w, h, scale=s)] + slots, floating + demoted, k, m)
 
 
 def strip(a, sizer, tw, th, hero_pos, img_mult, align, cap, primaries_only=False):
@@ -188,7 +229,8 @@ def solve_column(a, sizer, rows, box, kc, align, vjust, img_mult):
         res = _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue=False)
         if res:
             return res[0], res[1], demoted
-        victims = [u for r in rows for u in r if a.units[u].role != "headline"]
+        victims = [u for r in rows for u in r if a.units[u].role != "headline"
+                   and not (a.units[u].role == "hero" and big_hero(a))]  # a big photo is never demoted
         if not victims:
             break
         v = min(victims, key=lambda u: a.units[u].importance)

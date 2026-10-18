@@ -24,7 +24,8 @@ Conversion
   box's aspect ratio, so it draws exactly as in Crello). Fit "cover" when it fills
   the canvas (a background may be cropped), else "contain", like the samples' logos
   and products: the checker then holds its aspect ratio.
-- Rotations under 0.5 degrees are editor noise and become 0.
+- Rotations within 0.5 degrees of a multiple of 90 are editor noise and snap to it
+  (0.01 -> 0, 89.9 -> 90).
 - An unrotated image that bleeds off the canvas is cut to the visible part (its
   pixels too), so the source itself is on the canvas. Elements entirely off the
   canvas, empty texts and images without pixels are dropped.
@@ -114,8 +115,8 @@ def convert(row, fonts, formats):
         x, y, w, h = (float(row[k][i]) for k in ("left", "top", "width", "height"))
         rot = float(row["angle"][i] or 0.0)
         rot = (rot + 180) % 360 - 180
-        if abs(rot) < 0.5:  # editor noise (0.01 deg), not a design choice
-            rot = 0.0
+        if abs(rot - 90 * round(rot / 90)) < 0.5:  # editor noise (0.01 deg, 89.9 deg), not a design choice
+            rot = float((90 * round(rot / 90) + 180) % 360 - 180)
         if w <= 0 or h <= 0 or x >= cw or y >= ch or x + w <= 0 or y + h <= 0:
             dropped["off_canvas_or_empty"] += 1
             continue
@@ -157,8 +158,9 @@ def convert(row, fonts, formats):
                 el.update(x=box[0], y=box[1], width=box[2], height=box[3])
             asset_id = f"crello_{row['id']}_{i}.png"
             images[asset_id] = img
-            fills = el["x"] <= 0.01 * cw and el["y"] <= 0.01 * ch and el["x"] + el["width"] >= 0.99 * cw \
-                and el["y"] + el["height"] >= 0.99 * ch
+            from eval.check import rotated_bbox
+            d = rotated_bbox(el) if rot else (el["x"], el["y"], el["x"] + el["width"], el["y"] + el["height"])
+            fills = d[0] <= 0.01 * cw and d[1] <= 0.01 * ch and d[2] >= 0.99 * cw and d[3] >= 0.99 * ch  # as drawn
             el.update(type="image", asset_id=asset_id, fit="cover" if fills else "contain")
         els.append(el)
     design = {"canvas": {"width": cw, "height": ch}, "elements": els}

@@ -54,6 +54,8 @@ FOCUS_OFF_CANVAS = 0.35      # ...or, alone in its column, this far from the can
 FOCUS_FREE = 0.05            # off-centre by less than this is centred
 SCALE_FREE, SCALE_FULL = 1.0, 0.4  # headline/hero at this share of the size the target affords: no / full penalty
 HERO_MIN_AREA = 0.05         # the largest foreground image is the hero when it covers this share of the source
+HOLDER_MAX_AREA = 0.5       # a card/bubble/label/button holding text covers less than this share of the canvas
+HOLDER_MAX_ASPECT = 4.0      # ...and, if an image, is at most this elongated (a long bar is a backdrop, not a card)
 SIBLING_HEIGHT = 1.25        # sibling units' heights within this ratio of each other
 SIBLING_SCALE = 0.1          # siblings in the output scaled within 10% of each other
 SIBLING_RESTACK = 0.25       # kept together but no longer a row: worth it only when the row would be unreadable
@@ -96,6 +98,47 @@ def overlap_penalty(c: Ctx):
             total += r_out - r_src
             worst.append(f"{_name(a)}~{_name(b)} +{r_out - r_src:.2f}")
     return min(1.0, total), ", ".join(worst)
+
+
+def holders_penalty(c: Ctx):
+    """Text that sat on a card, a speech bubble, a label or a button (a shape, or a compact
+    image: at most HOLDER_MAX_ASPECT elongated, under HOLDER_MAX_AREA of the canvas) must stay
+    on it. Per (text, holder) pair: how much of the text left it (inside >= 90% is fine).
+    Penalty = mean over pairs."""
+    pairs = _holders(c)
+    if not pairs:
+        return 0.0, ""
+    pens, off = [], []
+    for t, h in pairs:
+        p = min(1.0, max(0.0, (0.9 - _inside(c.out_box[t], c.out_box[h])) / 0.9))
+        pens.append(p)
+        if p > 0.2:
+            off.append(f"{t} off {h}")
+    return sum(pens) / len(pens), ", ".join(off)
+
+
+def _holders(c):
+    pairs = []
+    for t, tb in c.src_box.items():
+        if c.src[t]["type"] != "text":
+            continue
+        best = None
+        for h, hb in c.src_box.items():
+            e = c.src[h]
+            if h == t or e["type"] == "text" or _area(hb) >= HOLDER_MAX_AREA * c.sw * c.sh or _area(hb) <= _area(tb):
+                continue
+            w, ht = hb[2] - hb[0], hb[3] - hb[1]
+            if e["type"] == "image" and max(w, ht) > HOLDER_MAX_ASPECT * max(min(w, ht), 1e-6):
+                continue
+            if _inside(tb, hb) >= 0.9 and (best is None or _area(hb) < _area(c.src_box[best])):
+                best = h
+        if best:
+            pairs.append((t, best))
+    return pairs
+
+
+def _inside(a, b):
+    return _area((max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3]))) / max(_area(a), 1e-6)
 
 
 def small_text_penalty(c: Ctx):
@@ -402,6 +445,7 @@ def _contrast_ratios(design_json):
 
 PENALTIES = {  # name: (function, weight, needs_render). Weights fitted to the hand labels: python -m eval.calibrate --fit
     "overlap": (overlap_penalty, 0.48, False),
+    "holders": (holders_penalty, 1.0, False),
     "small_text": (small_text_penalty, 0.8, False),
     "headline": (headline_penalty, 1.23, False),
     "scale": (scale_penalty, 1.0, False),

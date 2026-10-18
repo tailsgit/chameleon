@@ -2,6 +2,7 @@
 
     python -m eval.calibrate          # agreement of the recorded scores and of the current scorer
     python -m eval.calibrate --fit    # also fit the weights to the labels (paste them into PENALTIES)
+    python -m eval.calibrate --suite crello-dev   # the labels given on that suite's review page
 
 Every label in eval/results/labels.json, current or in a case's history, carries
 the exact output JSON it was given on, so labels from every engine version are
@@ -18,6 +19,7 @@ was not fitted on, which is the honest number: there are only 45 labels.
 
 import argparse
 import json
+import os
 from itertools import combinations
 from pathlib import Path
 
@@ -30,11 +32,19 @@ LABELS = REPO / "eval" / "results" / "labels.json"
 RANK = {"bad": 0, "okay": 1, "good": 2}
 
 
-def load():
-    sources = {p.stem.replace("chameleon_sample_", ""): json.loads(p.read_text())["source"]
-               for p in (REPO / "input").glob("chameleon_sample_*.json")}
+def _source(sample):
+    if sample.startswith("crello_"):
+        from eval.crello_convert import OUT
+        os.environ["CHAMELEON_ASSETS"] = str(OUT / "assets")
+        return json.loads((OUT / "designs" / f"{sample[len('crello_'):]}.json").read_text())["source"]
+    return json.loads((REPO / "input" / f"chameleon_sample_{sample}.json").read_text())["source"]
+
+
+def load(suite="samples"):
+    labels = LABELS if suite == "samples" else REPO / "eval" / "results" / suite / "labels.json"
+    sources = {}
     latest = {}  # (case, output) -> label; the latest verdict on the same output wins
-    for case, entry in json.loads(LABELS.read_text()).items():
+    for case, entry in json.loads(labels.read_text()).items():
         for lab in [*entry.get("history", []), entry]:
             if lab.get("verdict") and lab.get("output"):
                 key = (case, json.dumps(lab["output"], sort_keys=True))
@@ -43,6 +53,8 @@ def load():
     cases = []
     for (case, _o), lab in sorted(latest.items()):
         sample, out = case.split("__")[0], lab["output"]
+        if sample not in sources:
+            sources[sample] = _source(sample)
         b = score(sources[sample], out["canvas"], out, contrast=True)["breakdown"]
         cases.append({"case": case, "sample": sample, "label": RANK[lab["verdict"]], "recorded": lab["score"],
                       "engine": lab.get("engine"), "p": np.array([b[k]["penalty"] for k in PENALTIES])})
@@ -71,7 +83,7 @@ def agreement(scores, labels):
     tau = (conc - disc) / np.sqrt((conc + disc + ties_s) * (conc + disc + ties_l))
     good, bad = scores[labels == 2], scores[labels == 0]
     auc = np.mean([(g > b) + 0.5 * (g == b) for g in good for b in bad]) if len(good) and len(bad) else float("nan")
-    return {"pairwise": right / n, "tau_b": tau, "auc": auc}
+    return {"pairwise": right / n if n else float("nan"), "tau_b": tau, "auc": auc}  # nan: every label the same
 
 
 def totals(cases, w):
@@ -103,7 +115,7 @@ def report(scores, cases, title):
     labels = np.array([c["label"] for c in cases])
     scores = np.asarray(scores)
     a = agreement(scores, labels)
-    a["within"] = np.mean([agreement(scores[m], labels[m])["pairwise"]
+    a["within"] = np.nanmean([agreement(scores[m], labels[m])["pairwise"]
                            for m in (np.array([c["sample"] == s for c in cases]) for s in sorted({c["sample"] for c in cases}))])
     print(f"{title:<46} {a['pairwise']:.3f}     {a['within']:.3f}     {a['tau_b']:+.3f}   {a['auc']:.3f}")
     return a
@@ -112,8 +124,9 @@ def report(scores, cases, title):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fit", action="store_true")
+    ap.add_argument("--suite", default="samples", help="whose labels: samples (eval/results) or e.g. crello-dev")
     args = ap.parse_args()
-    cases = load()
+    cases = load(args.suite)
     print(f"{'':<46} pairwise  pairwise  tau_b    auc")
     print(f"{'':<46} all       within design")
     report([c["recorded"] for c in cases], cases, "old scorer (the scores you labelled against)")
