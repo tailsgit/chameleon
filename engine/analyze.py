@@ -104,6 +104,7 @@ class Analysis:
     rows: list               # reading-order rows of non-floating unit ids
     relations: dict = field(default_factory=dict)
     text_align: str = "center"
+    panels: dict = field(default_factory=dict)  # panel id -> ids of what sits on it (see _panels)
 
     def by_role(self, role):
         return next((u for u in self.units.values() if u.role == role), None)
@@ -138,6 +139,8 @@ def analyze(source):
 
     background = _background(els, z, sw, sh)
     rest = [i for i in els if i not in background]
+    panels = _panels(els, z, rest, sw, sh)
+    rest = [i for i in rest if i not in panels]
 
     parent = {i: i for i in rest}
 
@@ -159,14 +162,7 @@ def analyze(source):
             union(members[0], m)
 
     containment = []
-    # a shape or an image (a card, a speech bubble, a label) can hold what sits on it
-    holders = [i for i in rest if els[i]["type"] in ("shape", "image") and _alpha(els[i]) >= DECORATION_ALPHA
-               and (_area(full_box(els[i])) < CONTAINER_MAX_AREA[els[i]["type"]] * sw * sh
-                    # a bigger image holds text only when it is a flat card or bubble, not a photo
-                    or els[i]["type"] == "image" and _area(full_box(els[i])) < CARD_MAX_AREA * sw * sh and _flat(els[i]))
-               and not _bleeds(full_box(els[i]), sw, sh) and not _is_rule_line(els[i])
-               # an image card is compact; a long bar (a table row, a band) is a backdrop the text reflows over
-               and (els[i]["type"] == "shape" or max(els[i]["width"], els[i]["height"]) <= CARD_MAX_ASPECT * min(els[i]["width"], els[i]["height"]))]
+    holders = [i for i in rest if _holder(els[i], sw, sh)]
     holders.sort(key=lambda i: _area(full_box(els[i])))  # the tightest holder wins
     for i in rest:
         if _is_rule_line(els[i]):
@@ -239,7 +235,7 @@ def analyze(source):
 
     return Analysis(
         source=source, sw=sw, sh=sh, els=els, background=background, decorations=decorations, units=units,
-        rows=rows, text_align=aligns.most_common(1)[0][0] if aligns else "center",
+        rows=rows, text_align=aligns.most_common(1)[0][0] if aligns else "center", panels=panels,
         relations={
             "containment": containment,
             "alignment": _alignments(units),
@@ -462,6 +458,36 @@ def _is_rule_line(el):
     """A thin line (a divider or underline, often drawn as an image): at most THIN_PX thick, 10x longer."""
     thin, long = sorted((el["width"], el["height"]))
     return thin <= THIN_PX and long >= 10 * thin
+
+
+def _holder(el, sw, sh):
+    """A shape or an image (a card, a speech bubble, a label) that holds what sits on it as one rigid group."""
+    b = full_box(el)
+    return (el["type"] in ("shape", "image") and _alpha(el) >= DECORATION_ALPHA
+            and (_area(b) < CONTAINER_MAX_AREA[el["type"]] * sw * sh
+                 # a bigger image holds text only when it is a flat card or bubble, not a photo
+                 or el["type"] == "image" and _area(b) < CARD_MAX_AREA * sw * sh and _flat(el))
+            and not _bleeds(b, sw, sh) and not _is_rule_line(el)
+            # an image card is compact; a long bar (a table row, a band) is a backdrop the text reflows over
+            and (el["type"] == "shape" or max(el["width"], el["height"]) <= CARD_MAX_ASPECT * min(el["width"], el["height"])))
+
+
+def _panels(els, z, rest, sw, sh):
+    """Flat cards and panels too big to be a holder, with text on them: {id: ids on it}.
+    Kept as one rigid group they would keep their source proportions and end up mostly empty, so
+    they are left out of the layout and fitted around wherever their content goes (engine.fit.place_panel)."""
+    panels = {}
+    for i in rest:
+        e = els[i]
+        b = full_box(e)
+        if (e["type"] not in ("shape", "image") or e.get("rotation", 0) or _alpha(e) < DECORATION_ALPHA
+                or _bleeds(b, sw, sh) or _is_rule_line(e) or _holder(e, sw, sh) or e["type"] == "image" and not _flat(e)
+                or max(e["width"], e["height"]) > CARD_MAX_ASPECT * min(e["width"], e["height"])):  # a long bar is a backdrop
+            continue
+        on = [j for j in rest if j != i and z[j] > z[i] and _inside(element_box(els[j]), b) >= 0.9]
+        if any(els[j]["type"] == "text" for j in on):  # a panel holds text; an illustration with a cloud on it is not one
+            panels[i] = on
+    return panels
 
 
 def _flat(el):

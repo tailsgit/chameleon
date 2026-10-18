@@ -22,7 +22,7 @@ Recipes:
 
 import math
 from dataclasses import dataclass, field
-from itertools import product
+from itertools import combinations, product
 
 import numpy as np
 from PIL import Image
@@ -36,6 +36,8 @@ H_GAP = 0.03        # horizontal gap between strip cells, fraction of the canvas
 BISECT_STEPS = 16
 HERO_SHARE = 0.25   # a hero covering this share of the source canvas gets the anchor recipe
 HERO_SIDE_MAX = 0.65  # ...and at most this share of the target's width (or height) in it
+COL_ASPECT = 1.5    # a box this much wider than tall may lay its units out in 2 or 3 columns...
+COL_GAIN = 1.15     # ...when one column hits the readable floor and columns raise the scale this much
 
 
 @dataclass
@@ -222,11 +224,31 @@ def strip(a, sizer, tw, th, hero_pos, img_mult, align, cap, primaries_only=False
 
 def solve_column(a, sizer, rows, box, kc, align, vjust, img_mult):
     """Lay rows of units out top to bottom in `box` at the largest shared scale <= kc.
-    Returns (slots, k, demoted unit ids)."""
+    Returns (slots, k, demoted unit ids). In a wide box where one column would hit the
+    readable floor, 2 or 3 columns are tried too (units in reading order down each column,
+    columns left to right, cut where the columns' heights are most even); they win with
+    fewer demoted units, or COL_GAIN more scale."""
+    best = _solve(a, sizer, rows, box, kc, align, vjust, img_mult, 1)
+    if box[2] - box[0] < COL_ASPECT * (box[3] - box[1]) or not _at_floor(a, sizer, rows, *best[1:]):
+        return best
+    for cols in (2, 3):
+        res = _solve(a, sizer, rows, box, kc, align, vjust, img_mult, cols)
+        if res[0] and (len(res[2]) < len(best[2]) or len(res[2]) == len(best[2]) and res[1] >= COL_GAIN * best[1]):
+            best = res
+    return best
+
+
+def _at_floor(a, sizer, rows, k, demoted):
+    """Something was demoted, or some flowing text is already at its readable minimum."""
+    texts = [a.units[u].members[0] for r in rows for u in r if a.units[u].kind == "text" and u not in demoted]
+    return bool(demoted) or any(math.floor(a.els[t]["font_size"] * k + 1e-9) <= sizer.fs_min(t) for t in texts)
+
+
+def _solve(a, sizer, rows, box, kc, align, vjust, img_mult, cols):
     rows = [list(r) for r in rows if r]
     demoted = []
     while rows:
-        res = _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue=False)
+        res = _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue=False, cols=cols)
         if res:
             return res[0], res[1], demoted
         victims = [u for r in rows for u in r if a.units[u].role != "headline"
@@ -238,21 +260,32 @@ def solve_column(a, sizer, rows, box, kc, align, vjust, img_mult):
         rows = [[u for u in r if u != v] for r in rows]
         rows = [r for r in rows if r]
     if rows:  # only the headline is left and even it doesn't fit at a readable size
-        res = _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue=True)
+        res = _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue=True, cols=cols)
         if res:
             return res[0], res[1], demoted
         demoted += [u for r in rows for u in r]
     return [], 0.0, demoted
 
 
-def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue):
+def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue, cols=1):
     x0, y0, x1, y1 = box
     W, H = x1 - x0, y1 - y0
     if W <= 1 or H <= 1:
         return None
     gap = max(2.0, GAP * min(W, H))
+    col_gap = max(gap, H_GAP * W)
+    cw = (W - col_gap * (cols - 1)) / cols
 
     def measure(k):
+        if cols > 1:  # newspaper columns: here `lines` are the columns
+            ext = [(uid, sizer.unit_extent(a.units[uid], k, cw, img_mult=img_mult, rescue=rescue)) for r in rows for uid in r]
+            if len(ext) < cols:
+                return [ext], math.inf
+            height = lambda c: sum(e.h for _u, e in c) + gap * (len(c) - 1) + c[-1][1].slack
+            cuts = min(combinations(range(1, len(ext)), cols - 1),
+                       key=lambda cut: sorted((height(ext[i:j]) for i, j in zip((0, *cut), (*cut, len(ext)))), reverse=True))
+            lines = [ext[i:j] for i, j in zip((0, *cuts), (*cuts, len(ext)))]
+            return lines, max(height(c) for c in lines)
         lines = []
         for row in rows:
             cur, used = [], 0.0
@@ -286,6 +319,8 @@ def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue):
         k = lo
         lines, total = measure(k)
 
+    if cols > 1:
+        return [s for j, c in enumerate(lines) for s in _stack_cell(c, x0 + j * (cw + col_gap), y0, cw, H, gap, align, vjust)], k
     extra = H - total
     n = len(lines)
     if vjust == "spread":
@@ -304,6 +339,20 @@ def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue):
             x += e.w + gap
         y += lh + step
     return slots, k
+
+
+def _stack_cell(col, x0, y0, W, H, gap, align, vjust):
+    """One newspaper column: its units top to bottom in (x0, y0, W, H), spread or centred."""
+    total = sum(e.h for _u, e in col) + gap * (len(col) - 1) + col[-1][1].slack
+    extra = H - total
+    pad = extra / (len(col) + 1) if vjust == "spread" else 0.0
+    y = y0 + (pad if vjust == "spread" else extra / 2)
+    slots = []
+    for uid, e in col:
+        x = x0 + (W - e.w) / 2 if align == "center" else max(0.0, x0 - e.inset)
+        slots.append(Slot(uid, x, y, e.w, e.h, fs=e.fs, scale=e.scale, slack=e.slack, cols=e.cols))
+        y += e.h + gap + pad
+    return slots
 
 
 # --- helpers ------------------------------------------------------------------

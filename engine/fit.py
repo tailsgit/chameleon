@@ -222,6 +222,8 @@ def realize(a, plan, tw, th, focal=True):
         for m in u.members:
             grid.mark(element_box(out[m]))
 
+    for pid in sorted(a.panels, key=lambda i: a.els[i]["width"] * a.els[i]["height"]):  # inner panels first
+        place_panel(out, a, pid, tw, th)
     for d in a.decorations:
         place_decoration(out, sizer, a, d, tw, th)
     for u in [*a.units.values(), *a.decorations]:
@@ -377,6 +379,28 @@ def orient(out, a, u, tw, th):
 
 def _union_boxes(boxes):
     return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
+def place_panel(out, a, pid, tw, th):
+    """Fit a panel around wherever what sits on it ended up: that content's box plus the source
+    padding, scaled like the content. A non-cover image keeps its aspect (the box grows around
+    the content to it); never larger than the canvas."""
+    src, el = a.els[pid], out[pid]
+    sb = _union_boxes([element_box(a.els[i]) for i in a.panels[pid]])
+    ob = _union_boxes([element_box(out[i]) for i in a.panels[pid]])
+    s = math.sqrt(max((ob[2] - ob[0]) * (ob[3] - ob[1]), 1e-6) / max((sb[2] - sb[0]) * (sb[3] - sb[1]), 1e-6))
+    pad = [max(0.0, v) * s for v in (sb[0] - src["x"], sb[1] - src["y"], src["x"] + src["width"] - sb[2], src["y"] + src["height"] - sb[3])]
+    x0, y0, x1, y1 = ob[0] - pad[0], ob[1] - pad[1], ob[2] + pad[2], ob[3] + pad[3]
+    w, h = x1 - x0, y1 - y0
+    if src["type"] == "image" and src.get("fit", "contain") != "cover":
+        r = src["width"] / src["height"]
+        w, h = max(w, h * r), max(h, w / r)
+        f = min(1.0, tw / w, th / h)
+        w, h = w * f, h * f
+    else:
+        w, h = min(w, tw), min(h, th)
+    w, h = max(w, MIN_DIM), max(h, MIN_DIM)
+    el.update(x=_clamp((x0 + x1 - w) / 2, 0, tw - w), y=_clamp((y0 + y1 - h) / 2, 0, th - h), width=w, height=h)
 
 
 def place_decoration(out, sizer, a, d, tw, th):

@@ -118,3 +118,27 @@ def test_a_big_flat_card_holds_its_text_but_a_photo_does_not(tmp_path, monkeypat
         src = design(1080, 1080, [{**image("img", 240, 240, 600, 600), "asset_id": asset}, text("t", 300, 400, 480, 100, "On it", fs=60)])
         return any({"img", "t"} <= set(u.members) for u in analyze(src).units.values())
     assert on("card.png") and not on("photo.png")
+
+
+def test_a_tall_stack_of_texts_flows_into_columns_on_a_wide_banner():
+    src = design(500, 2000, [text(f"t{i}", 50, 40 + i * 120, 400, 60, f"Line number {i}", fs=40) for i in range(16)])
+    target = {"width": 1584, "height": 396}
+    out = resize(src, target)
+    assert check(src, target, out) == []
+    els = {e["id"]: e for e in out["elements"]}
+    col = {i: els[f"t{i}"]["x"] // 400 for i in range(16)}  # columns are ~528px apart on this banner
+    assert 2 <= len(set(col.values())) <= 3  # side by side in 2 or 3 columns
+    assert all(els[f"t{i}"]["font_size"] >= 14 for i in range(16))  # instead of all shrinking to fit one column
+    assert sorted(range(16), key=lambda i: (col[i], els[f"t{i}"]["y"])) == list(range(16))  # down each column, then right
+
+
+def test_an_oversized_panel_fits_around_its_text():
+    panel = {"id": "panel", "type": "shape", "x": 60, "y": 60, "width": 960, "height": 960,
+             "shape": "rectangle", "fill": "rgba(255,255,255,1)"}
+    src = design(1080, 1080, [panel, text("h", 140, 140, 800, 120, "A short title", fs=80)])
+    assert "panel" in analyze(src).panels
+    target = {"width": 1920, "height": 1080}
+    out = {e["id"]: e for e in resize(src, target)["elements"]}
+    p, h = out["panel"], out["h"]
+    assert p["x"] <= h["x"] and p["y"] <= h["y"]  # still behind its text...
+    assert p["width"] * p["height"] < 0.5 * 1920 * 1080  # ...but no longer a mostly empty square
