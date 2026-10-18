@@ -6,9 +6,9 @@ existing elements, picks new font sizes, and never adds, removes, rewrites or re
 
 A naive resize stretches the picture; this engine moves the furniture. It works out what the
 design is made of (background, headline, hero photo, logo, call to action, groups that belong
-together, reading order), generates many candidate layouts for the target shape, measures every
-text box with the renderer's own text layout, and keeps the candidate that breaks no rule and
-scores best.
+together, reading order), generates many candidate layouts for the target shape (from layout
+recipes, and from the layouts of real designs of a similar shape), measures every text box with
+the renderer's own text layout, and keeps the candidate that breaks no rule and scores best.
 
 ```
 input/<task>.json  (source design + target_canvas)
@@ -22,25 +22,28 @@ output/<task>_output.png    (rendered with the bundled renderer)
 ```
 
 No machine-learning model, no network access at run time, no generated pixels. Pure Python on
-top of the provided renderer; the Docker image is about 300 MB.
+top of the provided renderer, plus a 0.8 MB library of layout geometry; the Docker image is
+about 300 MB.
 
 ## Results
 
 Measured with our own checker and scorer (`eval/`, described below), not the official ones.
+Retrieval (see How it works) is on by default; the right-hand column is the same engine with it off.
 
-| Test set | Cases | Pass every hard rule | Average score (0-100) |
-|---|---|---|---|
-| The 3 provided samples x 15 real platform formats | 45 | 45 (100%) | 96.3 |
-| 200 real designs from the Crello dataset x 3 formats (development set) | 600 | 592 (98.7%) | 89.9 |
-| 100 further Crello designs x 3 formats (held out, run once per release) | 300 | 295 (98.3%) | 89.6 |
-| 300 random synthetic designs | 300 | 299 | – |
+| Test set | Cases | Pass every hard rule | Average score (0-100) | Retrieval off |
+|---|---|---|---|---|
+| The 3 provided samples x 15 real platform formats | 45 | 45 (100%) | 97.5 | 97.4 |
+| 200 real designs from the Crello dataset x 3 formats (development set) | 600 | 592 (98.7%) | 90.9 | 88.8 |
+| 100 further Crello designs x 3 formats (held out) | 300 | 295 (98.3%) | 90.8 | 88.7 |
+| 300 random synthetic designs | 300 | 299 | – | – |
 
-For comparison, a uniform stretch passes 1 of the 45 sample cases (average 87.1). Every
-remaining failure is a hairline (a line 1-3 px thick) that cannot stay at least 1 px thick
-without breaking its proportions on a much smaller canvas; see Known limitations.
+For comparison, a uniform stretch passes 1 of the 45 sample cases. Every remaining failure is a
+hairline (a line 1-3 px thick) that cannot stay at least 1 px thick without breaking its
+proportions on a much smaller canvas; see Known limitations.
 
 Docker, `linux/amd64` emulated on Apple silicon, `--network none`: all 45 sample cases in
-172 s, median 3.4 s per case, slowest 9.4 s (the most complex sample on a 728x90 leaderboard).
+272 s, median 5.0 s per case, slowest 15.1 s (retrieval off: 177 s, median 3.6 s, slowest
+10.4 s). A time budget keeps every case to about 15 s; see Select.
 
 ## Run it
 
@@ -57,6 +60,10 @@ docker run --rm --network none \
 Every `*.json` task file in `input/` (a `source` design and a `target_canvas`) produces
 `<task>_output.json` and `<task>_output.png` in `output/`, plus a one-line self-check per task.
 Everything is installed at build time; nothing is downloaded at run time.
+
+To run with recipes only (no retrieved layouts), add `-e CHAMELEON_RETRIEVAL=0` to `docker run`
+(or set it in the environment without Docker). If the layout library file is missing, the engine
+runs with recipes only by itself.
 
 ### Without Docker
 
@@ -114,6 +121,16 @@ does not fit, the least important unit (never the headline, never a big hero pho
 of the column and placed later into free space. In a wide box where one column would hit the
 readable minimum, the solver also tries 2 and 3 newspaper-style columns.
 
+**Retrieved layouts** (`engine/retrieve.py`) are added alongside the recipes. A library of 1,494
+layouts (`engine/data/layout_library.json`) holds the geometry of real designs as our analyzer
+sees them: canvas aspect ratio, and each unit's role, kind and box as fractions of the canvas. It
+holds no text, images or identifiers. For each task, the 30 library layouts with a similar aspect
+ratio and the closest mix of roles are taken. Our units are mapped into their slots by an optimal
+assignment on role, kind and size; text never goes into a slot where it would be unreadable, and
+units without a good slot go into free space. Each mapped layout is sized by the same code as the
+recipes, with the same scale limits. A retrieved layout is dropped when it gives the headline or
+main image under 70% of the canvas share that the best recipe layout gives it.
+
 ### 3. Fit (`engine/fit.py`)
 
 Turns each plan into a real output design:
@@ -132,11 +149,17 @@ Turns each plan into a real output design:
 ### 4. Select (`engine/select.py`)
 
 1. Drop duplicates and every candidate that breaks a hard rule (`eval/check.py`).
-2. Rank the rest by a geometric score (`eval/score.py`, about 1 ms each), render the top 10 and
+2. Drop candidates that put text newly on top of a busy part of an image (a headline over a photo
+   or illustration it was not on in the source), unless every candidate does.
+3. Rank the rest by a geometric score (`eval/score.py`, about 1 ms each), render the top 10 and
    re-rank with a text-contrast check. Rendering is the expensive step under emulation, so only
    those few are rendered.
-3. When the target has the source's aspect ratio, the plain uniform scale of the source is
+4. When the target has the source's aspect ratio, the plain uniform scale of the source is
    preferred unless another candidate is clearly better (by 2 points).
+
+**Time budget.** Each case has 15 seconds of wall-clock time (`engine/resize.py:BUDGET_S`). When
+it runs out, no new candidates are generated or rendered and the best one so far is chosen, so the
+engine always returns a valid output in about that time.
 
 ### Checking and scoring (`eval/`)
 
@@ -147,22 +170,25 @@ into the image.
   the canvas (unrotated box and rotated bounds), images in proportion (within 5%) unless `fit:
   cover`, `fit` unchanged, text inside its box (measured with the renderer's own layout), nothing
   shrunk out of sight, backgrounds still filling the canvas.
-- `eval/score.py`: 0-100 from weighted penalties: overlaps, text below a readable size, headline
-  no longer leading, elements shrunk out of proportion, wasted or unbalanced space, floating
-  elements drifting from what they sat on, text leaving its card, broken sibling groups, lost
-  alignments, reading order, colour emphasis, and (optional, renders once) text contrast. The
-  weights are fitted to hand labels: 75 cases labelled good or bad by eye.
+- `eval/score.py`: 0-100 from weighted penalties: overlaps, text newly on top of an image, the
+  headline or main image losing its share of the canvas (the heaviest), text below a readable
+  size, headline no longer leading, wasted or unbalanced space, floating elements drifting from
+  what they sat on, text leaving its card, broken sibling groups, lost alignments, reading order,
+  colour emphasis, and (optional, renders once) text contrast. The weights are fitted to 105
+  cases labelled good, okay or bad by eye.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest                          # 151 tests
+python -m pytest                          # 177 tests
 python -m eval.bench                      # 45 sample cases: check + score -> eval/results/
 python -m eval.bench --render             # + a PNG per case and a contact sheet
 python -m eval.synthetic                  # 300 random designs, robustness
 ```
 
 The Crello test sets need the dataset converted locally first (`eval/crello_convert.py`,
-`eval/crello_testset.py`); no Crello design, image or text is in the repository or the image.
+`eval/crello_testset.py`). No Crello design, image or text is in the repository or the image;
+the layout library is geometry and roles only (`eval/build_library.py`), built from Crello
+designs that are not in either test set.
 
 ## Assumptions
 
@@ -182,7 +208,9 @@ The rules leave some points open. Where the organisers have not answered, we dec
 6. **A background turned 90 or 270 degrees** on a non-square canvas fills only the centred
    square: filling the canvas would push its unrotated box off the canvas.
 7. **Crello is used only to test against and learn from**: geometry and roles, never pixels or
-   text.
+   text. The shipped layout library is derived geometry (normalised boxes and roles) with no
+   text, pixels or identifiers. We consider this outside the dataset licence's restrictions on
+   redistributing designs or their elements, but have not had that confirmed by the organisers.
 8. **No model.** Quality comes from analysis, layout rules and selection, which keeps the image
    small and deterministic and the run fully offline.
 
@@ -193,6 +221,9 @@ The rules leave some points open. Where the organisers have not answered, we dec
   reports it as hidden. This is every remaining failure in our test sets.
 - **Text inside groups shrinks with its group.** Text on a card or in a grid scales with it
   rather than re-wrapping, so a big card on a much smaller canvas can make its text small.
+- **Retrieved layouts can still misjudge.** Some layouts of real designs suit our content
+  poorly (e.g. a big decorative circle crowding out a photo). The scorer, guard and rejection
+  rules catch most of these but not all; `CHAMELEON_RETRIEVAL=0` gives recipes only.
 - **Panels with a lot of text.** A large flat panel is fitted around its text after layout; when
   the layout splits that text apart, the panel can grow over nearby decoration.
 - **No crop control for photos.** The renderer always centre-crops `cover` images, so the subject
@@ -209,7 +240,8 @@ The rules leave some points open. Where the organisers have not answered, we dec
 ## Repository
 
 ```
-engine/            the engine: resize, analyze, recipes, fit, select; main.py is the provided orchestrator
+engine/            the engine: resize, analyze, recipes, retrieve, fit, select; main.py is the provided orchestrator
+engine/data/       the layout library (geometry and roles only)
 eval/              checker, scorer, benchmarks, test suites, Crello conversion, review page
 renderer/          the provided renderer (transformer-convertor + cr-renderer), vendored
 brand_kit/         fonts and assets for the sample designs

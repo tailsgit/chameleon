@@ -874,3 +874,38 @@ Refitted on all three label sets together (`eval.calibrate --fit --suite samples
   - Warme Dusche: the headline shrank.
 
 The scorer and the selection it drives now share the same blind spots. So the merge condition ("looks better by eye") isn't met: main stays at v1-submittable.
+
+## 22. Text newly over images; retrieval switch; v2
+
+### Text newly over an image (eval/score.py)
+- **`text_over_image` penalty:** per text, the share of its drawn box newly covered by non-background images (output share minus source share, summed over images, capped at 1). 0.05 is free, 0.5 is full; the worst text sets the penalty.
+- **Weight 3.0, pinned:** the free fit gives 0.63. Agreement on the retrieval labels rises with the weight and plateaus at 3: 0.789 (weight 0) -> 0.825. Samples and crello-dev don't change; pooled 0.851 -> 0.857.
+- **Rejection:** `busy_text_over_image` rejects a candidate when a text newly sits 20% or more on one image and that image's pixels under it are busy: mean |gradient| > 0.02 on 0-1 grey, measured on the asset through its fit, with transparent pixels counting as flat. `engine.select` drops such candidates unless all are like that.
+- **Why 0.02:** text that designers put on images measures median 0.000 and 75th percentile 0.008 (400 sources). The overlaps judged bad by eye measure: anti-frizz headline on bamboo 0.035, "SELF CARE" on a photo 0.057, storyboard captions on photos 0.20-0.28.
+- **Switch:** `CHAMELEON_RETRIEVAL=0` turns retrieval off (tested). It is read on every call, so `docker run -e` works.
+
+### Results, both ways (v1 = v1-submittable outputs rescored with the current scorer)
+
+| | v1 | retrieval on | retrieval off |
+|---|---|---|---|
+| crello-dev | 592/600, 87.64 | 592/600, **90.92** (346 better, 29 worse) | 592/600, **88.76** (179 better, 32 worse) |
+| crello-holdout (once per mode) | 295/300, 87.46 | 295/300, **90.78** (183 better, 10 worse) | 295/300, **88.67** (94 better, 15 worse) |
+| samples | 45/45, 96.82 | 45/45, 97.49 | 45/45, 97.36 |
+| dev native runtime (8 workers) | | median 5.8 s, p95 14.1 s, max 21.9 s | median 3.8 s, p95 11.6 s, max 16.6 s |
+| Docker, 45 samples, offline | 167 s | 272 s (median 5.0 s, max 15.1 s) | 177 s (median 3.6 s, max 10.4 s) |
+
+- **Retrieved layouts win:** dev 264/600, holdout 126/300.
+- **Budget reached:** retrieval on: dev 20 cases, holdout 14. Retrieval off: dev 4, holdout 6.
+- **Average `text_over_image` on dev:** v1 0.060, on 0.035, off 0.037. Average `key_size`: v1 0.365, on 0.179, off 0.300.
+
+### By eye (the 30 dev cases that changed most against v1, per mode)
+- **Retrieval on** (`eval/results/crello-review-retrieval-on`): about 18 better, 3 worse, 9 the same.
+  - Better: storyboard, Australia x2, Save 10%, Capsule wardrobe, Perfect hideout, Warme Dusche x2, Beauty portrait, Internships, Kindest Heart, Green Party, Ocean x3, Paris.
+  - Worse: Fashion Talks x2 (a big circle crowds out the photo), Beauty email header (slightly).
+  - Still poor in both: Apartment, Sangria, Health Matters.
+- **Retrieval off** (`eval/results/crello-review-retrieval-off`): about 9 better, 3 worse, 18 the same.
+
+### Decision
+All three conditions hold: dev and holdout beat v1 in both modes, and the retrieval-on review shows clearly more better than worse. `retrieval` is merged into main and tagged **v2**, with retrieval on by default. `CHAMELEON_RETRIEVAL=0` gives recipes only.
+
+The organisers still haven't confirmed that shipping a geometry-only library derived from Crello is fine (assumption 3, §8).
