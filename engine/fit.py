@@ -27,7 +27,7 @@ import numpy as np
 
 from engine.analyze import element_box, full_box
 from eval.check import text_layout
-from eval.score import MIN_TEXT_PX_ABS, MIN_TEXT_REL_HEIGHT
+from eval.score import MIN_TEXT_PX_ABS, MIN_TEXT_REL_HEIGHT, _drawn_box
 
 MIN_DIM = 1.5        # px. check() treats < 1px as a hidden element
 # Text metrics differ by ~1-2% between platforms (CoreText on macOS, FreeType on Linux), so the
@@ -47,6 +47,7 @@ class Extent:
     fs: int | None = None        # text units
     scale: float | None = None   # image and rigid units
     slack: float = 0.0           # text: spare box height below the lines (not part of the layout)
+    inset: float = 0.0           # how far in from the box's left edge the drawing starts
 
 
 class Sizer:
@@ -129,7 +130,8 @@ class Sizer:
                 if t["lines"] == lay["lines"] and self.fits(eid, fs, tight):
                     w, lay = tight, t
         line = fs * src.get("line_height", 1.2)
-        return Extent(w, lay["height"] + 1.0, fs=fs, slack=line * max(1, math.ceil(SLACK_LINES * lay["lines"])))
+        return Extent(w, lay["height"] + 1.0, fs=fs, slack=line * max(1, math.ceil(SLACK_LINES * lay["lines"])),
+                      inset=max(0.0, lay["left"]) if lay["lines"] else 0.0)
 
     def unit_extent(self, u, k, max_w, max_h=math.inf, img_mult=1.0, rescue=False):
         if u.kind == "text":
@@ -139,7 +141,9 @@ class Sizer:
             s = max(s, self.read_scale(u))
         s = min(s, max_w / max(u.w, 1e-6), max_h / max(u.h, 1e-6))
         s = max(s, self.floor_scale(u))
-        return Extent(u.w * s, u.h * s, scale=s)
+        # contain images are letterboxed: what is drawn can start well inside the box
+        inset = min(_drawn_box(self.a.els[m])[0] for m in u.members) - u.box[0]
+        return Extent(u.w * s, u.h * s, scale=s, inset=max(0.0, inset * s))
 
 
 def realize(a, plan, tw, th, focal=True):

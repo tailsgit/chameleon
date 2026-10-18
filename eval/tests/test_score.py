@@ -198,3 +198,35 @@ def test_attached_unit_must_stay_on_its_host_and_tilt_the_right_way():
     left = floating(move(-250, 0))                                 # now on the bottle's left side, same tilt
     assert "tilts the wrong way" in left["detail"]
     assert "tilts" not in floating(move(-250, 0, mirror=True))["detail"]
+
+
+def test_sibling_that_differs_is_the_emphasised_one():
+    from eval.score import emphasis, siblings
+    src = load("level3_advanced")["source"]
+    assert [[u[0] for u in g] for g in siblings(src)] == [["badge1_bg", "badge2_bg", "badge3_bg"]]
+    sal = emphasis(src)
+    assert "badge2_bg" in sal  # the dark badge among orange ones, though dark is not a palette accent
+    assert not {"badge1_bg", "badge3_bg"} & set(sal)
+    assert {"cta_bg", "ribbon_bg"} <= set(sal)  # not in a group: the palette rule as before
+
+
+def test_split_sibling_row_is_penalised():
+    src = load("level3_advanced")["source"]
+    def siblings_pen(mutate):
+        out = copy.deepcopy(src)
+        mutate(out)
+        return score(src, src["canvas"], out)["breakdown"]["siblings"]["penalty"]
+    def drop_one(o):  # badge2 moved down on its own
+        for i in ("badge2_bg", "badge2_label"):
+            el(o, i)["y"] += 200
+    def shrink_one(o):
+        el(o, "badge3_bg").update(width=130, height=25)
+    assert siblings_pen(lambda o: None) == 0
+    assert siblings_pen(drop_one) == 0.5 and siblings_pen(shrink_one) == 0.5
+
+
+def test_shrunken_hero_and_headline_cost_scale():
+    assert _mutated(lambda o: None)["scale"]["penalty"] == 0
+    def shrink(o):  # the bottle at half size
+        el(o, "product").update(width=200, height=200)
+    assert _mutated(shrink)["scale"]["penalty"] > 0.3

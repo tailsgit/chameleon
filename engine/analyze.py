@@ -21,7 +21,8 @@ knowledge of particular designs or ids. Steps:
    (eval.score.emphasis: saturated and far from the main colours).
    Floating units that partly cover a bigger unit (a ribbon across a card) are
    attached to it: `host` and their centre's position inside it (`rel`).
-   Every unit records which side of its anchor (host centre, else canvas centre)
+   A row of sibling units (a row of badges or buttons, eval.score.siblings) is merged
+   into one rigid unit, so it is never split. Every unit records which side of its anchor (host centre, else canvas centre)
    it sits on (`side`), so a rotated unit moved to the mirrored side can mirror its tilt.
 6. Relationships: containment pairs, shared alignment edges/centres, canvas-edge
    anchoring, reading-order rows and size order.
@@ -32,7 +33,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from eval.check import rotated_bbox, text_layout
-from eval.score import ATTACH_MIN, emphasis
+from eval.score import ATTACH_MIN, emphasis, siblings
 from renderer.converter.colorutil import parse_rgba
 
 ACTION_WORDS = {
@@ -183,8 +184,7 @@ def analyze(source):
             decorations.remove(d)
 
     for u in [*units.values(), *decorations]:
-        u.edges = tuple(e for e, near in (("left", u.box[0] <= EDGE_ZONE * sw), ("right", u.box[2] >= (1 - EDGE_ZONE) * sw),
-                                         ("top", u.box[1] <= EDGE_ZONE * sh), ("bottom", u.box[3] >= (1 - EDGE_ZONE) * sh)) if near)
+        u.edges = _edges(u.box, sw, sh)
     for d in decorations:
         d.role, d.confidence, d.importance = "decoration", 0.8, ROLE_BASE["decoration"]
 
@@ -196,6 +196,7 @@ def analyze(source):
         u.importance = round(ROLE_BASE[u.role] * (0.8 + 0.2 * u.confidence) + area_bonus + EMPHASIS_BOOST * u.emphasis, 4)
         # small badges pinned to a corner, rotated stickers and loose graphics are placed after the main layout
         u.floating = u.role in ("badge", "decoration") and (u.corner is not None or u.rotated) or u.role == "decoration"
+    _merge_siblings(units, source, z, sw, sh)
     _attach(units)
     for u in [*units.values(), *decorations]:
         h = units[u.host].drawn if u.host else (0, 0, sw, sh)
@@ -218,6 +219,35 @@ def analyze(source):
             "size_order": sorted(units, key=lambda uid: -_area(units[uid].box)),
         },
     )
+
+
+def _edges(b, sw, sh):
+    return tuple(e for e, near in (("left", b[0] <= EDGE_ZONE * sw), ("right", b[2] >= (1 - EDGE_ZONE) * sw),
+                                   ("top", b[1] <= EDGE_ZONE * sh), ("bottom", b[3] >= (1 - EDGE_ZONE) * sh)) if near)
+
+
+def _merge_siblings(units, source, z, sw, sh):
+    """A row of sibling units (eval.score.siblings: a row of badges or buttons) becomes one
+    rigid unit, so it is scaled, moved or demoted as one piece and never split up."""
+    owner = {m: uid for uid, u in units.items() for m in u.members}
+    for g in siblings(source):
+        uids = list(dict.fromkeys(owner.get(i) for u in g for i in u))
+        if None in uids or len(uids) < 2 or any(x not in units or units[x].floating for x in uids):
+            continue
+        parts = [units.pop(x) for x in uids]
+        lead = max(parts, key=lambda u: u.importance)
+        box = _union([u.box for u in parts])
+        # a sibling centred on the design's axis (the middle badge under a centred headline) keeps
+        # that axis: pad the row's box to be symmetric about it, so centring the row centres it
+        axes = [(v.drawn[0] + v.drawn[2]) / 2 for v in units.values() if not v.floating]
+        mid = next((c for c in ((u.drawn[0] + u.drawn[2]) / 2 for u in parts) if any(abs(c - x) <= 2 for x in axes)), None)
+        if mid is not None:
+            half = max(mid - box[0], box[2] - mid)
+            box = (mid - half, box[1], mid + half, box[3])
+        units["+".join(uids)] = Unit(
+            id="+".join(uids), members=sorted((m for u in parts for m in u.members), key=lambda m: z[m]), kind="rigid",
+            box=box, drawn=_union([u.drawn for u in parts]), role=lead.role, confidence=lead.confidence,
+            importance=lead.importance, edges=_edges(box, sw, sh), emphasis=max(u.emphasis for u in parts))
 
 
 def side_of(b, ref):

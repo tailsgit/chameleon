@@ -555,3 +555,34 @@ score 0.6–1.4 points higher than any layout the engine now produces. This is a
 the fix would be to drop row siblings together.
 
 Agreement with the labels held: pairwise 0.892, AUC 1.00 (unchanged).
+
+## 16. Sibling groups, scale, left edges
+
+- **Siblings** (`eval.score.siblings`): a row of similar units, such as badges or buttons.
+  - Membership: at least 2 units, each holding a shape or image, with the same member types.
+  - They must have heights within 1.25× of each other and sit side by side in one row.
+  - Gaps must be under their average width, with nothing else between them.
+- **Emphasis within a group:** in a group of three or more, the one sibling whose colour differs from the others is the emphasised one, even when it is dark or light; the others are not.
+  - The others must agree among themselves (ΔE < 15), and the odd one must be at least ΔE 35 from them.
+  - A uniform group falls back to the palette rule. Units outside groups keep the palette rule.
+  - In L3 the dark "AWARD WINNING" badge is now the emphasised one, not the orange badges.
+- **Engine:** `analyze._merge_siblings` turns a group into one rigid unit. It is scaled, moved and demoted as one piece and never split.
+  - If a sibling sat on the design's centre axis, the row's box is padded to be symmetric about that axis, so centring the row keeps the axis.
+  - Cost: on tall canvases with a high readable minimum (Instagram Story/Post), the row no longer wraps into a readable stack. It shrinks as a whole, below the readable size (small_text 0.15–0.17).
+- **Scorer:**
+  - `siblings` penalty: 0.5 if the members are no longer one row with nothing between them, plus 0.5 if their scales differ by more than 10%.
+  - `scale` penalty: the headline and the hero image, each judged against the scale the target affords (the square root of the area ratio, or less when the unit would not fit at that scale). None at 1.0×, full at 0.4×.
+  - Alignment: a source-aligned pair that went from stacked to side by side, or back, is no longer counted as lost. Rotated units are left out of near misses.
+- **Left edges:** in left-aligned columns the engine now lines up what is drawn with the column edge, not the box. Before, centred text in its slightly wider box and letterboxed images started 10–15px in, which read as ragged edges and near misses.
+- **Presentation 16:9 (L3):** in the last round, two stacks were nearly tied: a bigger bottle with smaller text, or the reverse.
+  - The scorer had no view on size and the tie flipped.
+  - With `scale`, the transposition rule and straight left edges, the split (bottle left, text column right) wins. Both the text and the bottle are bigger.
+- **Calibration** (52 labelled outputs):
+
+  | weights | pairwise | within design | AUC |
+  |---|---|---|---|
+  | Current | 0.863 | 0.837 | 0.951 |
+  | Leave-one-design-out (within design) | | 0.842 | |
+
+  - The labels are indifferent to the scale thresholds (0.8–1.0 all give 0.863–0.864).
+  - 1.0 was chosen because it makes the split win where it is clearly better by eye.

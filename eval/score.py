@@ -52,6 +52,10 @@ FOCUS_OFF_ZONE = 0.25        # emphasised unit's centre this far from its column
 ROW_GAP = 0.1                # side-by-side units closer than this (x canvas width) form one row block
 FOCUS_OFF_CANVAS = 0.35      # ...or, alone in its column, this far from the canvas centre (x canvas width)
 FOCUS_FREE = 0.05            # off-centre by less than this is centred
+SCALE_FREE, SCALE_FULL = 1.0, 0.4  # headline/hero at this share of the size the target affords: no / full penalty
+HERO_MIN_AREA = 0.05         # the largest foreground image is the hero when it covers this share of the source
+SIBLING_HEIGHT = 1.25        # sibling units' heights within this ratio of each other
+SIBLING_SCALE = 0.1          # siblings in the output scaled within 10% of each other
 GAP_FREE, GAP_FULL = 0.1, 0.3  # an empty band between content: free up to 10% of the side, full penalty at 30%
 BALANCE_FULL = 0.25          # content centre this much further off-centre than in the source = full penalty
 NEAR_MISS_REL = 0.02         # edges closer than 2% of the canvas side, but not aligned, are a near miss
@@ -129,6 +133,35 @@ def headline_penalty(c: Ctx):
     lead = vo[head] / max(vo[other], 1e-6)
     p = min(1.0, max(0.0, (need - lead) / (need - 1)))
     return p, (f"headline {head} leads {other} by {lead:.2f}x (needs {need:.2f}x)" if p else "")
+
+
+def scale_penalty(c: Ctx):
+    """The headline and the hero image should keep their size: each one's output
+    scale over the scale the target affords it, which is the area ratio's square
+    root (the scale that keeps the design's share of the canvas), or less when the
+    unit itself would not fit the target at that scale. A ratio of SCALE_FREE or more
+    costs nothing, SCALE_FULL or less costs 1. Mean over the two."""
+    area = math.sqrt(c.tw * c.th / (c.sw * c.sh))
+    texts = [i for i, e in c.src.items() if e["type"] == "text" and i in c.out]
+    imgs = [u for u in c.units if len(u) == 1 and c.src[u[0]]["type"] == "image"
+            and _area(c.src_box[u[0]]) >= HERO_MIN_AREA * c.sw * c.sh]
+    pens, notes = [], []
+    for i in [max(texts, key=lambda i: _visual_size(c.src[i]))] if texts else []:
+        e = c.src[i]
+        r = c.out[i]["font_size"] / e["font_size"] / min(area, c.tw / e["width"], c.th / max(e["height"], 1e-6))
+        pens.append((i, r))
+    for u in [max(imgs, key=lambda u: _area(c.src_box[u[0]]))] if imgs else []:
+        sb, ob = c.src_box[u[0]], c.out_box[u[0]]
+        w, h = sb[2] - sb[0], sb[3] - sb[1]
+        r = max((ob[2] - ob[0]) / max(w, 1e-6), (ob[3] - ob[1]) / max(h, 1e-6)) / min(area, c.tw / w, c.th / h)
+        pens.append((u[0], r))
+    out = []
+    for i, r in pens:
+        p = min(1.0, max(0.0, (SCALE_FREE - r) / (SCALE_FREE - SCALE_FULL)))
+        out.append(p)
+        if p:
+            notes.append(f"{i} at {r:.2f} of its size")
+    return (sum(out) / len(out) if out else 0.0), ", ".join(notes)
 
 
 def space_penalty(c: Ctx):
@@ -237,6 +270,33 @@ def emphasis_penalty(c: Ctx):
     return (num / den if den else 0.0), ", ".join(off)
 
 
+def siblings_penalty(c: Ctx):
+    """A row of sibling units (see `siblings`: a row of badges or buttons) must stay
+    one row: all present at one scale (within SIBLING_SCALE) and side by side, with
+    nothing else between them. Half the penalty for each failure, mean over groups."""
+    groups = siblings(c.source)
+    if not groups:
+        return 0.0, ""
+    pens, notes = [], []
+    for g in groups:
+        boxes = {tuple(u): _unit_box(c.out_box, u) for u in g}
+        scales = [(boxes[tuple(u)][2] - boxes[tuple(u)][0]) / max(_unit_box(c.src_box, u)[2] - _unit_box(c.src_box, u)[0], 1e-6)
+                  for u in g]
+        uneven = max(scales) > (1 + SIBLING_SCALE) * min(scales)
+        k = tuple(g[0])
+        row = _row_block(boxes, k, math.inf)
+        others = [_unit_box(c.out_box, u) for u in c.units if tuple(u) not in boxes]
+        span = _content_box(boxes, [[k] for k in boxes])
+        between = any(_overlap_ratio(o, span) > 0.5 for o in others)
+        split = len(row) < len(g) or between
+        p = 0.5 * uneven + 0.5 * split
+        pens.append(p)
+        if p:
+            notes.append(f"{'+'.join(_name(u) for u in g)} " + " and ".join(
+                w for w, bad in (("uneven", uneven), ("split", split)) if bad))
+    return sum(pens) / len(pens), ", ".join(notes)
+
+
 def alignment_penalty(c: Ctx):
     """Half: near-miss alignments, i.e. a pair of units whose left/centre/right
     (or top/middle/bottom) differ by more than ALIGNED_PX but less than
@@ -244,13 +304,19 @@ def alignment_penalty(c: Ctx):
     near misses added over the source, per unit, capped at 1. Half: lost
     alignments, i.e. pairs aligned in the source (a row of badges, a centred
     stack) that share no edge or centre on either axis in the output; as a
-    share of the source's aligned pairs (a row may become a column)."""
-    n_src = _near_misses(c.src_box, c.units, c.sw, c.sh)
-    n_out = _near_misses(c.out_box, c.units, c.tw, c.th)
+    share of the source's aligned pairs. A pair that went from stacked to side by
+    side, or back, was re-laid out on purpose and is not lost (a row may become a
+    column). Rotated units are left out of near misses."""
+    # a rotated unit's box edges are not lines anyone sees
+    flat = [u for u in c.units if not any(c.src[i].get("rotation", 0) for i in u)]
+    n_src = _near_misses(c.src_box, flat, c.sw, c.sh)
+    n_out = _near_misses(c.out_box, flat, c.tw, c.th)
     p_near = min(1.0, max(0, n_out - n_src) / max(1, len(c.units)))
     aligned = [(a, b) for a, b in combinations(c.units, 2)
                if _aligned(_unit_box(c.src_box, a), _unit_box(c.src_box, b))]
-    lost = [(a, b) for a, b in aligned if not _aligned(_unit_box(c.out_box, a), _unit_box(c.out_box, b))]
+    # stacked in the source and side by side now (or the reverse): the layout was transposed on purpose
+    lost = [(a, b) for a, b in aligned if not _aligned(_unit_box(c.out_box, a), _unit_box(c.out_box, b))
+            and _beside(_unit_box(c.src_box, a), _unit_box(c.src_box, b)) == _beside(_unit_box(c.out_box, a), _unit_box(c.out_box, b))]
     p_lost = len(lost) / len(aligned) if aligned else 0.0
     return 0.5 * p_near + 0.5 * p_lost, (f"near misses {n_src}->{n_out}, lost alignments {len(lost)}/{len(aligned)}"
                                          + "".join(f", {_name(a)}|{_name(b)}" for a, b in lost[:4]))
@@ -329,16 +395,18 @@ def _contrast_ratios(design_json):
 
 
 PENALTIES = {  # name: (function, weight, needs_render). Weights fitted to the hand labels: python -m eval.calibrate --fit
-    "overlap": (overlap_penalty, 0.5, False),
-    "small_text": (small_text_penalty, 1.5, False),
-    "headline": (headline_penalty, 1.2, False),
-    "space": (space_penalty, 2.6, False),
-    "balance": (balance_penalty, 1.5, False),
-    "floating": (floating_penalty, 1.2, False),
-    "emphasis": (emphasis_penalty, 1.0, False),  # fit leaves it at the floor (labels predate it); kept by request
-    "alignment": (alignment_penalty, 0.5, False),
-    "reading_order": (reading_order_penalty, 0.5, False),
-    "contrast": (contrast_penalty, 0.5, True),
+    "overlap": (overlap_penalty, 0.48, False),
+    "small_text": (small_text_penalty, 0.8, False),
+    "headline": (headline_penalty, 1.23, False),
+    "scale": (scale_penalty, 1.0, False),
+    "space": (space_penalty, 1.46, False),
+    "balance": (balance_penalty, 1.96, False),
+    "floating": (floating_penalty, 1.0, False),
+    "emphasis": (emphasis_penalty, 0.95, False),  # agreement is the same at the floor or here; kept by request
+    "siblings": (siblings_penalty, 0.61, False),
+    "alignment": (alignment_penalty, 0.55, False),
+    "reading_order": (reading_order_penalty, 0.48, False),
+    "contrast": (contrast_penalty, 0.48, True),
 }
 
 
@@ -472,6 +540,11 @@ def _reading_order(boxes_by_id, units, columns=False):
     return [u for row in rows for _box, u in sorted(row["items"], key=lambda t: t[0][1 - lo])]
 
 
+def _beside(a, b):
+    """Side by side (overlapping vertically) rather than stacked."""
+    return min(a[3], b[3]) - max(a[1], b[1]) > 0 and min(a[2], b[2]) - max(a[0], b[0]) <= 0
+
+
 def _aligned(a, b):
     """Share a left, centre or right edge, or a top, middle or bottom edge (within ALIGNED_PX)."""
     return any(abs(a[lo] - b[lo]) <= ALIGNED_PX or abs(a[hi] - b[hi]) <= ALIGNED_PX
@@ -574,6 +647,7 @@ def _tilt_wrong(c, unit, anchor):
 @lru_cache(maxsize=32)
 def _emphasis_cached(source_json):
     source = json.loads(source_json)
+    source_els = {e["id"]: e for e in source["elements"]}
     cw, ch = source["canvas"]["width"], source["canvas"]["height"]
     painted = []  # (lab colour, area)
     own = {}      # element id -> lab colour
@@ -601,8 +675,26 @@ def _emphasis_cached(source_json):
             palette.append([lab, area])
     total = sum(p[1] for p in palette) or 1.0
     main = [p[0] for p in palette if p[1] / total >= MAIN_SHARE]
-    out = {}
+    out, grouped = {}, set()
+    for g in (g for g in _siblings_cached(source_json) if len(g) >= 3):
+        cols = []  # each sibling's colour: its largest opaque member's
+        for u in g:
+            painted_ids = [i for i in u if i in own]
+            cols.append(own[max(painted_ids, key=lambda i: _area(_drawn_box(source_els[i])))] if painted_ids else None)
+        if None in cols:
+            continue
+        grouped.update(i for u in g for i in u)
+        for n, lab in enumerate(cols):  # the odd one out, if the rest agree
+            rest = cols[:n] + cols[n + 1:]
+            d = min(_delta(lab, r) for r in rest)
+            if d >= ACCENT_MIN_DELTA and all(_delta(a, b) < SAME_COLOUR for a, b in combinations(rest, 2)):
+                for i in g[n]:
+                    out[i] = round(min(1.0, d / 70), 3)
+        if not any(i in out for u in g for i in u):
+            grouped.difference_update(i for u in g for i in u)  # uniform group: judged by the palette like the rest
     for i, lab in own.items():
+        if i in grouped:
+            continue
         chroma = math.hypot(lab[1], lab[2])
         share = sum(p[1] for p in palette if _delta(p[0], lab) < SAME_COLOUR) / total
         d = min((_delta(lab, m) for m in main), default=0.0)
@@ -617,8 +709,62 @@ def emphasis(source):
     ACCENT_MIN_CHROMA), at least ACCENT_MIN_DELTA from every colour that covers
     MAIN_SHARE of the painted area, and not itself that common. Images count
     towards the palette (by their mean colour) but are never emphasised by colour.
-    Strength = distance from the nearest main colour / 70, capped at 1."""
+    Strength = distance from the nearest main colour / 70, capped at 1.
+    Members of a sibling group (see `siblings`) are judged against each other instead:
+    the one sibling whose colour differs by ACCENT_MIN_DELTA from the others, which
+    agree among themselves, is emphasised, whether bright, dark or light, and the
+    others are not. A group whose colours all agree falls back to the palette rule."""
     return _emphasis_cached(json.dumps(source, sort_keys=True))
+
+
+def siblings(source):
+    """Rows of similar units (a row of badges or buttons): groups of >= 2 source units
+    that each hold a shape or image, have the same member types, heights within
+    SIBLING_HEIGHT of each other, and sit side by side in one row with gaps under
+    the average width and no other unit between them. Lists of units (lists of ids).
+    Emphasis by sibling contrast needs >= 3, so that the others can agree."""
+    return _siblings_cached(json.dumps(source, sort_keys=True))
+
+
+@lru_cache(maxsize=32)
+def _siblings_cached(source_json):
+    source = json.loads(source_json)
+    src = {e["id"]: e for e in source["elements"]}
+    sw, sh = source["canvas"]["width"], source["canvas"]["height"]
+    by_group = {}
+    for i, e in src.items():
+        if not _is_background(e, sw, sh) and not _is_decoration(e):
+            by_group.setdefault(e.get("group_id") or ("__" + i), []).append(i)
+    units = list(by_group.values())
+    boxes = {tuple(u): _unit_box({i: _drawn_box(src[i]) for i in u}, u) for u in units}
+
+    def sig(u):
+        return tuple(sorted(src[i]["type"] for i in u))
+
+    alike = [u for u in units if {"shape", "image"} & set(sig(u)) and not any(src[i].get("rotation", 0) for i in u)]
+    groups, seen = [], set()
+    for u in sorted(alike, key=lambda u: boxes[tuple(u)][0]):
+        if tuple(u) in seen:
+            continue
+        row = [u]
+        for v in sorted(alike, key=lambda v: boxes[tuple(v)][0]):
+            a, b = boxes[tuple(row[-1])], boxes[tuple(v)]
+            hs = [boxes[tuple(w)][3] - boxes[tuple(w)][1] for w in (*row, v)]
+            gap = b[0] - a[2]
+            mean_w = sum(boxes[tuple(w)][2] - boxes[tuple(w)][0] for w in (*row, v)) / (len(row) + 1)
+            if (tuple(v) in seen or v is u or sig(v) != sig(u) or not 0 <= gap < mean_w
+                    or max(hs) > SIBLING_HEIGHT * min(hs) or not a[1] <= (b[1] + b[3]) / 2 <= a[3]):
+                continue
+            between = (a[2], min(a[1], b[1]), b[0], max(a[3], b[3]))
+            # something else in the gap breaks the row (a big unit the row sits on does not)
+            if any(_overlap_ratio(boxes[tuple(w)], between) > 0.5 for w in units if w is not v and w is not row[-1]
+                   and _area(boxes[tuple(w)]) < 4 * _area(between)):
+                continue
+            row.append(v)
+        if len(row) >= 2:
+            groups.append(row)
+            seen.update(tuple(w) for w in row)
+    return groups
 
 
 @lru_cache(maxsize=64)

@@ -156,7 +156,20 @@ def test_rotation_mirrors_only_with_the_position():
 
 def test_colour_emphasis_raises_importance():
     from engine.analyze import analyze
-    task = json.loads((REPO / "input" / "chameleon_sample_level3_advanced.json").read_text())
-    u = analyze(task["source"]).units
-    assert u["badge1"].emphasis > 0 and u["badge2"].emphasis == 0
-    assert u["badge1"].importance > u["badge2"].importance
+    src = json.loads((REPO / "input" / "chameleon_sample_level2_core.json").read_text())["source"]
+    grey = copy.deepcopy(src)  # the orange badge repainted in the dark palette colour
+    next(e for e in grey["elements"] if e["id"] == "badge_bg")["fill_color"] = "rgba(43,27,46,1)"
+    def badge(s):
+        return next(u for u in analyze(s).units.values() if "badge_bg" in u.members)
+    assert badge(src).emphasis > 0 and badge(grey).emphasis == 0
+    assert badge(src).importance > badge(grey).importance
+
+
+def test_sibling_row_is_one_unit_and_stays_together():
+    from engine.analyze import analyze
+    from eval.score import score
+    t = json.loads((REPO / "input" / "chameleon_sample_level3_advanced.json").read_text())
+    assert "badge1+badge2+badge3" in analyze(t["source"]).units
+    for tw, th in ((300, 250), (820, 312), (1920, 1080)):
+        out = resize(t["source"], {"width": tw, "height": th})
+        assert score(t["source"], out["canvas"], out)["breakdown"]["siblings"]["penalty"] == 0, (tw, th)
