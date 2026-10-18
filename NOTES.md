@@ -707,3 +707,58 @@ Leave-one-out (the score without each fix; full set 89.72):
 - **Still poor by eye:**
   - A tall text column on a wide banner shrinks to unreadable; it needs multi-column text flow.
   - A large flat card (86% of the Love poster) still ends up empty beside its photo.
+
+## 19. Text columns and oversized panels; Docker re-check
+
+### Fixes (general rules, no design ids)
+1. **Columns.** `solve_column` tries 2 and 3 columns when both of these hold:
+   - the text box is at least 1.5× wider than tall;
+   - one column hits the readable floor: something was demoted, or some flowing text is at its minimum size.
+
+   The units go in reading order down each column, columns left to right. The cut points give the most even column heights.
+
+   Columns win when they demote fewer units, or raise the shared scale by at least 15%. A single text element is never split; it takes its column's full width, so it wraps into fewer lines instead of shrinking.
+
+   I chose newspaper order over filling row by row because rows split each name from its subtitle (VAGANZO | OKLAHOMA) into different columns. The scorer accepts both orders.
+2. **Panels.** A panel is a flat shape or flat image with text on it that is:
+   - too big to be a card (`_holder` fails on size alone);
+   - compact (at most 4:1; a long bar is a backdrop the text reflows over);
+   - unrotated, and not off the canvas.
+
+   It leaves the layout and is fitted around wherever its content lands: the content's box plus the source padding, scaled like the content. A non-cover image keeps its aspect, as the `image_aspect` rule requires (105 of 107 such panels on dev are `contain` images), and it never grows larger than the canvas.
+
+   Two narrower versions came first:
+   - **Any content, not just text:** −0.31. An illustration with a cloud on it became a "panel", blew up to its aspect and covered the headline.
+   - **Long bars allowed:** −0.18.
+
+### Results ("before" is 5c5316c)
+
+| | before | after |
+|---|---|---|
+| crello-dev pass | 592/600 | 592/600 |
+| crello-dev average | 89.72 | **89.85** |
+| crello-holdout pass (run once) | 295/300 | 295/300 |
+| crello-holdout average | 89.39 | **89.55** (43 better, 25 worse) |
+| samples | 45/45, 96.15 | 45/45, 96.26 |
+| synthetic | 299/300 | 299/300 |
+
+- **On dev:** columns alone give 89.80; panels add a further +0.05 (64 cases better, 40 worse).
+- **Remaining failures:** all are hidden hairlines, as before.
+- **By eye:**
+  - Football banner: 78.71 → 95.34; all its text is readable, in 3 columns.
+  - Sacramento: the panel follows its text instead of staying an empty purple block.
+  - Herbs circle: worse. Its text is split up by the layout, and the fitted circle covers a herb sprig. Fixing that needs the text laid out inside the panel.
+  - Love poster: unchanged. Its panel holds a photo, not text.
+
+### Docker (image `chameleon-engine`, 304 MB, built in 188 s; `--network none`, amd64 emulated on Apple silicon)
+- **All 45 samples:** 172 s in total, every self-check OK.
+  - Per case: median 3.41 s, mean 3.53 s, slowest 9.40 s (L3 leaderboard).
+  - By level (median / max): L1 1.81 s / 3.69 s; L2 3.36 s / 5.03 s; L3 5.38 s / 9.40 s.
+- **Outputs are not byte-identical to native** (2/45 are).
+  - Same fonts, fields and sizes everywhere; 38 cases differ only by small moves.
+  - 5 cases pick a different candidate. This is the known ~1% CoreText/FreeType glyph-width difference (section 12): text boxes measure differently, so ties between candidates break differently.
+- **What matters holds:**
+  - native outputs pass `check()` inside Docker (45/45, 95.51 scored there);
+  - Docker's outputs pass natively (45/45, 95.83 scored natively);
+  - each platform's own outputs score 96.26 (native) and 96.15 (Docker).
+- **Docker Desktop's disk image** is now on the external drive, which is exFAT: no sparse files, so `Docker.raw` takes its full size (228 GB).
