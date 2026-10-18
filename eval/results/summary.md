@@ -1,6 +1,6 @@
 # Benchmark summary
 
-Engine commit `4906296-dirty`, 45 cases (3 samples x 15 formats), render=yes, contrast=no.
+Engine commit `e7b2392`, 45 cases (3 samples x 15 formats), render=yes, contrast=no.
 
 - **Cases passing every hard rule: 45/45**
 - **Average score: 95.78** / 100
@@ -39,7 +39,7 @@ Engine commit `4906296-dirty`, 45 cases (3 samples x 15 formats), render=yes, co
 
 ## Timings (per case, this machine)
 
-- resize: mean 1662.72 ms, median 1714.07 ms, max 4450.43 ms
-- check: mean 1.43 ms, median 1.20 ms, max 3.44 ms
-- score: mean 1.80 ms, median 1.35 ms, max 4.35 ms
-- render: mean 76.45 ms, median 75.38 ms, max 154.59 ms
+- resize: mean 1665.04 ms, median 1719.83 ms, max 4418.12 ms
+- check: mean 1.45 ms, median 1.20 ms, max 3.38 ms
+- score: mean 1.80 ms, median 1.33 ms, max 4.38 ms
+- render: mean 76.62 ms, median 75.54 ms, max 154.52 ms
