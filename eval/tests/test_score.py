@@ -230,3 +230,19 @@ def test_shrunken_hero_and_headline_cost_scale():
     def shrink(o):  # the bottle at half size
         el(o, "product").update(width=200, height=200)
     assert _mutated(shrink)["scale"]["penalty"] > 0.3
+
+
+def test_restacked_siblings_cost_less_than_split_ones():
+    src = load("level3_advanced")["source"]
+    def pen(mutate):
+        out = copy.deepcopy(src)
+        mutate(out)
+        return score(src, src["canvas"], out)["breakdown"]["siblings"]["penalty"]
+    def stack(o):  # badges 2 and 3 under badge 1, same size, centred
+        for n, i in enumerate(("badge2", "badge3"), 1):
+            for part in ("_bg", "_label"):
+                el(o, i + part).update(x=el(o, i + part)["x"] - (310 if n == 1 else 670) + 20, y=el(o, i + part)["y"] + 70 * n)
+    def scatter(o):
+        for part in ("_bg", "_label"):
+            el(o, "badge3" + part)["y"] -= 900
+    assert pen(stack) == 0.25 and pen(scatter) == 0.5

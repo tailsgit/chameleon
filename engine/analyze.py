@@ -68,6 +68,7 @@ class Unit:
     host: str | None = None  # unit this floating unit is attached to
     rel: tuple = ()          # its drawn centre as a fraction of the host's drawn box
     side: tuple = (1, 1)     # side of its anchor it sits on (x, y), each +-1
+    parts: list = field(default_factory=list)  # a sibling row: (members, source box) of each sibling, left to right
 
     @property
     def w(self):
@@ -228,7 +229,9 @@ def _edges(b, sw, sh):
 
 def _merge_siblings(units, source, z, sw, sh):
     """A row of sibling units (eval.score.siblings: a row of badges or buttons) becomes one
-    rigid unit, so it is scaled, moved or demoted as one piece and never split up."""
+    rigid unit, so it is scaled, moved or demoted as one piece and never split up. When the row
+    would be too wide to stay readable it may rearrange into a stack or grid (engine.fit), but
+    its members always stay together, at one scale."""
     owner = {m: uid for uid, u in units.items() for m in u.members}
     for g in siblings(source):
         uids = list(dict.fromkeys(owner.get(i) for u in g for i in u))
@@ -247,7 +250,8 @@ def _merge_siblings(units, source, z, sw, sh):
         units["+".join(uids)] = Unit(
             id="+".join(uids), members=sorted((m for u in parts for m in u.members), key=lambda m: z[m]), kind="rigid",
             box=box, drawn=_union([u.drawn for u in parts]), role=lead.role, confidence=lead.confidence,
-            importance=lead.importance, edges=_edges(box, sw, sh), emphasis=max(u.emphasis for u in parts))
+            importance=lead.importance, edges=_edges(box, sw, sh), emphasis=max(u.emphasis for u in parts),
+            parts=[(u.members, u.box) for u in sorted(parts, key=lambda u: u.box[0])])
 
 
 def side_of(b, ref):

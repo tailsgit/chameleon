@@ -173,3 +173,13 @@ def test_sibling_row_is_one_unit_and_stays_together():
     for tw, th in ((300, 250), (820, 312), (1920, 1080)):
         out = resize(t["source"], {"width": tw, "height": th})
         assert score(t["source"], out["canvas"], out)["breakdown"]["siblings"]["penalty"] == 0, (tw, th)
+
+
+def test_sibling_row_restacks_rather_than_go_unreadable():
+    from eval.score import score
+    t = json.loads((REPO / "input" / "chameleon_sample_level3_advanced.json").read_text())
+    out = resize(t["source"], {"width": 1080, "height": 1920})
+    labels = [e for e in out["elements"] if e["id"] in ("badge1_label", "badge2_label", "badge3_label")]
+    assert len({e["font_size"] for e in labels}) == 1 and labels[0]["font_size"] >= 15  # one size, readable
+    sib = score(t["source"], out["canvas"], out)["breakdown"]["siblings"]
+    assert sib["penalty"] == 0.25 and "no longer a row" in sib["detail"]  # a stack, kept together

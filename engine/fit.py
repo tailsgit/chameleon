@@ -48,6 +48,7 @@ class Extent:
     scale: float | None = None   # image and rigid units
     slack: float = 0.0           # text: spare box height below the lines (not part of the layout)
     inset: float = 0.0           # how far in from the box's left edge the drawing starts
+    cols: int | None = None      # sibling row: columns of the arrangement used (see Sizer.arrangements)
 
 
 class Sizer:
@@ -136,14 +137,53 @@ class Sizer:
     def unit_extent(self, u, k, max_w, max_h=math.inf, img_mult=1.0, rescue=False):
         if u.kind == "text":
             return self.text_extent(u.members[0], k, max_w, rescue)
-        s = k * (img_mult if u.role == "hero" else 1.0)
+        want = k * (img_mult if u.role == "hero" else 1.0)
         if u.kind == "rigid" and not rescue:
-            s = max(s, self.read_scale(u))
-        s = min(s, max_w / max(u.w, 1e-6), max_h / max(u.h, 1e-6))
-        s = max(s, self.floor_scale(u))
+            want = max(want, self.read_scale(u))
+        # a sibling row keeps its row while that stays readable, else the fewest columns that do
+        readable = max(self.read_scale(u), self.floor_scale(u))
+        best = None
+        for cols, w, h, _o in self.arrangements(u):
+            s = max(min(want, max_w / max(w, 1e-6), max_h / max(h, 1e-6)), self.floor_scale(u))
+            if best is None or s > best[0] + 1e-9:
+                best = (s, cols, w, h)
+            if s >= readable - 1e-9:
+                best = (s, cols, w, h)
+                break
+        s, cols, w, h = best
         # contain images are letterboxed: what is drawn can start well inside the box
-        inset = min(_drawn_box(self.a.els[m])[0] for m in u.members) - u.box[0]
-        return Extent(u.w * s, u.h * s, scale=s, inset=max(0.0, inset * s))
+        inset = min(_drawn_box(self.a.els[m])[0] for m in u.members) - u.box[0] if cols == len(u.parts) or not u.parts else 0.0
+        return Extent(w * s, h * s, scale=s, inset=max(0.0, inset * s), cols=cols if u.parts else None)
+
+    def arrangements(self, u):
+        """Ways to lay out a unit, in order of preference: [(cols, w, h, origins)], origins mapping
+        each member to its top-left offset (source px) from the unit's top-left. Plain units have
+        one, as designed. A sibling row has its source row, then grids of fewer columns down to a
+        single stack: same gaps as the row, each grid row centred."""
+        key = ("arr", u.id)
+        if key in self._lay:
+            return self._lay[key]
+        els = self.a.els
+        row = [(len(u.parts) or None, u.w, u.h, {m: (els[m]["x"] - u.box[0], els[m]["y"] - u.box[1]) for m in u.members})]
+        boxes = [b for _m, b in u.parts]
+        gaps = [max(0.0, b[0] - a[2]) for a, b in zip(boxes, boxes[1:])]
+        gap = sum(gaps) / len(gaps) if gaps else 0.0
+        for cols in range(len(u.parts) - 1, 0, -1):
+            chunks = [u.parts[i:i + cols] for i in range(0, len(u.parts), cols)]
+            widths = [sum(b[2] - b[0] for _m, b in c) + gap * (len(c) - 1) for c in chunks]
+            heights = [max(b[3] - b[1] for _m, b in c) for c in chunks]
+            W, H = max(widths), sum(heights) + gap * (len(chunks) - 1)
+            origins, y = {}, 0.0
+            for c, cw, ch in zip(chunks, widths, heights):
+                x = (W - cw) / 2
+                for members, b in c:
+                    for m in members:
+                        origins[m] = (x + els[m]["x"] - b[0], y + (ch - (b[3] - b[1])) / 2 + els[m]["y"] - b[1])
+                    x += b[2] - b[0] + gap
+                y += ch + gap
+            row.append((cols, W, H, origins))
+        self._lay[key] = row
+        return row
 
 
 def realize(a, plan, tw, th, focal=True):
@@ -159,7 +199,7 @@ def realize(a, plan, tw, th, focal=True):
         if u.kind == "text":
             place_text(out[u.members[0]], sizer, slot, th)
         else:
-            place_rigid(out, sizer, a, u, slot.scale, slot.x, slot.y)
+            place_rigid(out, sizer, a, u, slot.scale, slot.x, slot.y, slot.cols)
         placed += [element_box(out[m]) for m in u.members]
 
     grid = Grid(tw, th, plan.margin)
@@ -201,11 +241,13 @@ def place_text(el, sizer, slot, th):
     sizer.set_font(el, fs)
 
 
-def place_rigid(out, sizer, a, u, s, x, y):
-    """Scale every member of u by s about the unit's top-left corner and move that corner to (x, y)."""
+def place_rigid(out, sizer, a, u, s, x, y, cols=None):
+    """Scale every member of u by s about the unit's top-left corner and move that corner to (x, y).
+    A sibling row uses the arrangement with `cols` columns (default: its source row)."""
+    origins = next((o for c, _w, _h, o in sizer.arrangements(u) if c == cols), None) or sizer.arrangements(u)[0][3]
     for m in u.members:
         src, el = a.els[m], out[m]
-        el.update(x=x + (src["x"] - u.box[0]) * s, y=y + (src["y"] - u.box[1]) * s,
+        el.update(x=x + origins[m][0] * s, y=y + origins[m][1] * s,
                   width=src["width"] * s, height=src["height"] * s)
         if el["type"] == "text":
             fs = max(1, math.floor(src["font_size"] * s + 1e-9))
@@ -266,20 +308,25 @@ def place_floating(out, sizer, a, u, k, grid, tw, th, focal=True):
         return
 
     want = max(k, sizer.read_scale(u)) if u.kind == "rigid" else k
+    arrs = sizer.arrangements(u)
     best = None
     for r in rects:
-        s = min(want, (r[2] - r[0]) / max(u.w, 1e-6), (r[3] - r[1]) / max(u.h, 1e-6))
-        value = s / max(want, 1e-9) - 0.25 * _dist(r, ax, ay) / diag
-        if s >= sizer.floor_scale(u) and (best is None or value > best[0]):
-            best = (value, r, s)
+        for cols, uw, uh, _o in arrs:  # a sibling row: its row while readable, else the fewest columns that are
+            s = min(want, (r[2] - r[0]) / max(uw, 1e-6), (r[3] - r[1]) / max(uh, 1e-6))
+            value = s / max(want, 1e-9) - 0.25 * _dist(r, ax, ay) / diag
+            if s >= sizer.floor_scale(u) and (best is None or value > best[0] + 1e-9):
+                best = (value, r, s, cols, uw, uh)
+            if s >= sizer.read_scale(u) - 1e-9:
+                break
     if best is None:
-        s = min(max(sizer.floor_scale(u), 1e-3), tw / max(u.w, 1e-6), th / max(u.h, 1e-6))
+        cols, uw, uh = arrs[0][:3]
+        s = min(max(sizer.floor_scale(u), 1e-3), tw / max(uw, 1e-6), th / max(uh, 1e-6))
         r = (0, 0, tw, th)
     else:
-        _v, r, s = best
-    w, h = u.w * s, u.h * s
+        _v, r, s, cols, uw, uh = best
+    w, h = uw * s, uh * s
     fx = (r[0] + r[2]) / 2 if focal and u.emphasis and u.corner is None and not u.rotated else ax  # see the text branch
-    place_rigid(out, sizer, a, u, s, _clamp(fx - w / 2, r[0], r[2] - w), _clamp(ay - h / 2, r[1], r[3] - h))
+    place_rigid(out, sizer, a, u, s, _clamp(fx - w / 2, r[0], r[2] - w), _clamp(ay - h / 2, r[1], r[3] - h), cols)
 
 
 def place_attached(out, sizer, a, u, tw, th):

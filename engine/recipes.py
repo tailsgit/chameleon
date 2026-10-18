@@ -44,6 +44,7 @@ class Slot:
     fs: int | None = None
     scale: float | None = None
     slack: float = 0.0   # text: spare box height below the lines (see engine.fit.Extent)
+    cols: int | None = None  # sibling row: arrangement (see engine.fit.Sizer.arrangements)
 
 
 @dataclass
@@ -258,7 +259,7 @@ def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue):
         # left-aligned: what is drawn lines up with the column edge, not the (wider) box
         x = x0 + (W - lw) / 2 if align == "center" else max(0.0, x0 - ln[0][1].inset)
         for uid, e in ln:
-            slots.append(Slot(uid, x, y + (lh - e.h) / 2, e.w, e.h, fs=e.fs, scale=e.scale, slack=e.slack))
+            slots.append(Slot(uid, x, y + (lh - e.h) / 2, e.w, e.h, fs=e.fs, scale=e.scale, slack=e.slack, cols=e.cols))
             x += e.w + gap
         y += lh + step
     return slots, k

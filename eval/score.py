@@ -56,6 +56,8 @@ SCALE_FREE, SCALE_FULL = 1.0, 0.4  # headline/hero at this share of the size the
 HERO_MIN_AREA = 0.05         # the largest foreground image is the hero when it covers this share of the source
 SIBLING_HEIGHT = 1.25        # sibling units' heights within this ratio of each other
 SIBLING_SCALE = 0.1          # siblings in the output scaled within 10% of each other
+SIBLING_RESTACK = 0.25       # kept together but no longer a row: worth it only when the row would be unreadable
+SIBLING_SPREAD = 2.0         # their union box at most this times their summed area (or the source's, if looser)
 GAP_FREE, GAP_FULL = 0.1, 0.3  # an empty band between content: free up to 10% of the side, full penalty at 30%
 BALANCE_FULL = 0.25          # content centre this much further off-centre than in the source = full penalty
 NEAR_MISS_REL = 0.02         # edges closer than 2% of the canvas side, but not aligned, are a near miss
@@ -272,8 +274,11 @@ def emphasis_penalty(c: Ctx):
 
 def siblings_penalty(c: Ctx):
     """A row of sibling units (see `siblings`: a row of badges or buttons) must stay
-    one row: all present at one scale (within SIBLING_SCALE) and side by side, with
-    nothing else between them. Half the penalty for each failure, mean over groups."""
+    together: all at one scale (within SIBLING_SCALE), and one compact block (their
+    union box at most SIBLING_SPREAD times their summed area: a row, or a stack or
+    grid when the row would not stay readable) with nothing else in it. Half the
+    penalty for each failure; a compact stack or grid costs SIBLING_RESTACK, less than
+    the small-text penalty an unreadable row would cost. Mean over groups."""
     groups = siblings(c.source)
     if not groups:
         return 0.0, ""
@@ -283,17 +288,18 @@ def siblings_penalty(c: Ctx):
         scales = [(boxes[tuple(u)][2] - boxes[tuple(u)][0]) / max(_unit_box(c.src_box, u)[2] - _unit_box(c.src_box, u)[0], 1e-6)
                   for u in g]
         uneven = max(scales) > (1 + SIBLING_SCALE) * min(scales)
-        k = tuple(g[0])
-        row = _row_block(boxes, k, math.inf)
-        others = [_unit_box(c.out_box, u) for u in c.units if tuple(u) not in boxes]
         span = _content_box(boxes, [[k] for k in boxes])
-        between = any(_overlap_ratio(o, span) > 0.5 for o in others)
-        split = len(row) < len(g) or between
-        p = 0.5 * uneven + 0.5 * split
+        src_span = _content_box({tuple(u): _unit_box(c.src_box, u) for u in g}, [[tuple(u)] for u in g])
+        spread = _area(span) / max(sum(_area(b) for b in boxes.values()), 1e-6)
+        src_spread = _area(src_span) / max(sum(_area(_unit_box(c.src_box, u)) for u in g), 1e-6)
+        between = any(_overlap_ratio(_unit_box(c.out_box, u), span) > 0.5 for u in c.units if tuple(u) not in boxes)
+        split = between or spread > max(SIBLING_SPREAD, src_spread * 1.1)
+        restacked = not split and len(_row_block(boxes, tuple(g[0]), math.inf)) < len(g)
+        p = 0.5 * uneven + 0.5 * split + SIBLING_RESTACK * restacked
         pens.append(p)
         if p:
             notes.append(f"{'+'.join(_name(u) for u in g)} " + " and ".join(
-                w for w, bad in (("uneven", uneven), ("split", split)) if bad))
+                w for w, bad in (("uneven", uneven), ("split", split), ("no longer a row", restacked)) if bad))
     return sum(pens) / len(pens), ", ".join(notes)
 
 

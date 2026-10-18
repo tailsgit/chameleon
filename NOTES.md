@@ -586,3 +586,9 @@ Agreement with the labels held: pairwise 0.892, AUC 1.00 (unchanged).
 
   - The labels are indifferent to the scale thresholds (0.8–1.0 all give 0.863–0.864).
   - 1.0 was chosen because it makes the split win where it is clearly better by eye.
+- **Restacking (follow-up):** a sibling row whose text would fall below the readable minimum may now rearrange into a grid or a single stack (`Sizer.arrangements`).
+  - The grid keeps the row's gaps, centres each line, and keeps all members at one scale.
+  - The row is used whenever it stays readable.
+  - Scorer: a compact stack or grid with nothing in it costs 0.25 (`SIBLING_RESTACK`). Members spread apart (union box over 2× their area, or looser than in the source) or with anything between them count as split (0.5).
+  - Agreement: 0.868 pairwise, good-vs-bad 0.953.
+  - Instagram Story and Post are readable again. LinkedIn Banner and Wide Skyscraper score 1.5 points lower: a readable stack costs more than the unreadable row it replaced.
