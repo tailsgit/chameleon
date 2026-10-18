@@ -809,3 +809,68 @@ Leave-one-out (the score without each fix; full set 89.72):
   - Mixed: one.
 
   The scorer calls 29 of the top 30 better (+3.69 on average). Its verdict on retrieved layouts needs hand labels before we trust it. The 30 are on the review page (`eval/results/crello-retrieval-review`, middle column = same engine without retrieval).
+
+## 21. Key-content penalty, retrieval guard, time budget (branch `retrieval`, not merged)
+
+### Labels on the 30 retrieval cases (§20)
+- **Verdicts:** 28 bad, 1 okay, 1 good.
+- **The old scorer barely agreed:** pairwise 0.632 (0.5 = chance), AUC 0.39 (the one good case scored below most bad ones). It scored the bad cases at up to 98.2.
+- **What separates the labels best** (all 105 labels: 45 samples, 30 crello-dev, 30 retrieval) is the main image's share of the canvas against the source's:
+  - good: median 1.06, none below 0.5;
+  - bad: median 0.52, half below 0.5.
+
+  Next comes the headline's share: good median 1.42, bad 0.88.
+
+### Scorer: `key_size` (eval/score.py)
+- **What it measures:** the headline (biggest-looking text) and the main image (largest non-background image, alone or in a group; the old `scale` penalty only saw single-image units).
+- **How:** each one's scale against what the target affords. Free at 0.85 or more, full at 0.5 or less, rising fast in between. A cover-cropped main image whose box aspect fell below 0.6 of the source's also counts.
+- **Penalty:** the worst of these. Decorations aren't measured.
+- **`key_elements()`** is shared with the engine's guard.
+
+### Weights
+Refitted on all three label sets together (`eval.calibrate --fit --suite samples,crello-dev,crello-retrieval-review`, which can now take several sets at once).
+
+| key_size weight | samples | crello-dev | retrieval | all |
+|---|---|---|---|---|
+| 0 | 0.868 | 0.829 | 0.632 | 0.856 |
+| 1 | 0.835 | 0.853 | 0.754 | 0.855 |
+| **2 (chosen, with the refit)** | 0.820 | 0.868 | 0.789 | 0.850 |
+
+- **Why pinned:** the free fit leaves `key_size` at its floor (pooled 0.862) because the sample labels pull the other way.
+- **Why 2.0:** it agrees best with the Crello and retrieval labels, at a cost of 0.05 on the samples and 0.01 pooled. emphasis stays at 0.95, as requested earlier.
+- **Test change:** the calibration test's threshold for the samples moves from 0.84 / 0.94 to 0.80 / 0.90.
+
+### Engine
+- **Guard** (`resize._guard`): a retrieved layout is dropped if the headline's or the main image's drawn share of the canvas falls below 0.7 of what the best-scoring passing recipe layout gives it.
+- **Budget** (`resize.BUDGET_S = 15`): checked between recipe plans, between retrieved layouts, between realisations and between contrast renders. Past the deadline nothing new is made or rendered, and the best so far is chosen.
+  - Without the render check, one case took 38 s under load: 10 contrast renders at about 1.1 s each on a 1080x1920 canvas.
+  - The test sets a 0 s budget, and the output is still valid.
+- **Missing library:** `library()` returns [] and the recipes alone run. Tested: the output is valid, no errors are logged, and the winner isn't a retrieved layout.
+- **Bench columns:** `budget_hit`, `guard_dropped`.
+
+### Results (v1 outputs rescored with the current scorer, so both are judged the same way)
+
+| | v1-submittable | current |
+|---|---|---|
+| crello-dev | 592/600, 85.98 | 592/600, **90.45** (362 better, 27 worse) |
+| crello-holdout (run once) | 295/300, 85.45 | 295/300, **89.90** (186 better, 10 worse) |
+| samples | 45/45 | 45/45, 96.83 |
+| synthetic | 299/300 | 299/300 |
+
+- **Retrieved layouts win:** dev 304/600, holdout 148/300.
+- **Budget reached:** dev 35 cases, holdout 23.
+- **Native runtime** (8 workers): dev median 6.5 s, p95 15.2 s, max 18.3 s; holdout max 22.8 s.
+- **Docker** (amd64 emulated, `--network none`): all 45 samples pass, average 96.71.
+  - Total 350 s, against v1's 167 s.
+  - Per case: median 8.2 s (L1 2.4 s, L2 9.0 s, L3 11.2 s), slowest 18.0 s (L3 leaderboard).
+
+### By eye: not merged
+`eval/results/crello-retrieval-review-2` holds the 30 dev cases that changed most against v1 (middle column = v1).
+- **Better:** Australia, Capsule wardrobe, Perfect hideout, Internships, Kindest Heart, Big Sale.
+- **Still bad, as labelled in §20:** Beauty header (headline small), Apartment (photo a sliver), Sangria, Health Matters.
+- **Worse:**
+  - Anti-frizz: the headline sits on top of the bamboo.
+  - Self care: body text runs over the photo.
+  - Warme Dusche: the headline shrank.
+
+The scorer and the selection it drives now share the same blind spots. So the merge condition ("looks better by eye") isn't met: main stays at v1-submittable.

@@ -48,3 +48,40 @@ def test_retrieved_plans_map_by_role_and_pass(monkeypatch):
     assert out["title"]["x"] >= 0.55 * 1920 - 1 and out["title"]["y"] < out["note"]["y"]
     assert check(src, target, {"canvas": {"width": 1920, "height": 1000}, "elements": list(out.values())}) == []
     assert retrieve.retrieved(a, Sizer(a, 1000, 1920), 1000, 1920) == []  # a tall target: no design that shape
+
+
+def _sample(level="level3_advanced"):
+    import json
+    from pathlib import Path
+    return json.loads((Path(__file__).resolve().parents[2] / "input" / f"chameleon_sample_{level}.json").read_text())["source"]
+
+
+def test_missing_library_falls_back_to_recipes(monkeypatch, tmp_path, caplog):
+    import logging
+    from engine.resize import resize
+    monkeypatch.setattr(retrieve, "LIBRARY", tmp_path / "no_such_library.json")
+    retrieve.library.cache_clear()
+    try:
+        assert retrieve.library() == []
+        src, target = _sample(), {"width": 1920, "height": 1080}
+        with caplog.at_level(logging.INFO, logger="engine"):
+            out = resize(src, target)
+        assert check(src, target, out) == []
+        winners = [r.getMessage() for r in caplog.records if r.getMessage().startswith("winner: ")]
+        assert winners and winners[0] != "winner: retrieved"
+        assert not any(r.levelno >= logging.ERROR for r in caplog.records)  # nothing failed on the way
+    finally:
+        retrieve.library.cache_clear()  # the next test reads the real library again
+
+
+@pytest.mark.parametrize("budget", [0.0, 0.5])
+def test_time_budget_still_returns_a_valid_output(monkeypatch, budget, caplog):
+    import logging
+    import engine.resize
+    monkeypatch.setattr(engine.resize, "BUDGET_S", budget)
+    src, target = _sample(), {"width": 728, "height": 90}
+    with caplog.at_level(logging.INFO, logger="engine"):
+        out = engine.resize.resize(src, target)
+    assert check(src, target, out) == []
+    if budget == 0.0:
+        assert any(r.getMessage().startswith("time budget reached") for r in caplog.records)

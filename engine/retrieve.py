@@ -15,12 +15,15 @@ geometry and roles of real designs, as our analyzer sees them. For a task:
 """
 
 import json
+import logging
 import math
+import time
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 
+log = logging.getLogger(__name__)
 LIBRARY = Path(__file__).parent / "data" / "layout_library.json"
 ASPECT_TOL = 0.2   # |ln(aspect) - ln(target aspect)|: within ~22% of the target's shape
 TOP_K = 30
@@ -39,8 +42,9 @@ def library():
         return []
 
 
-def retrieved(a, sizer, tw, th):
-    """Up to TOP_K plans, one per retrieved design, best composition match first."""
+def retrieved(a, sizer, tw, th, deadline=None):
+    """Up to TOP_K plans, one per retrieved design, best composition match first; none
+    more once `deadline` (time.monotonic()) has passed."""
     from engine.recipes import Plan, margin  # recipes imports nothing from here; avoids a cycle at import time
 
     want = math.log(tw / th)
@@ -51,6 +55,9 @@ def retrieved(a, sizer, tw, th):
     flow = [u for u in a.units.values() if not u.floating and not u.host]
     plans = []
     for rank, d in enumerate(near[:TOP_K]):
+        if deadline is not None and time.monotonic() > deadline:
+            log.info("time budget reached after %d retrieved layouts", rank)
+            break
         slots, used = [], []
         if flow:
             cost = np.array([[_cost(a, sizer, u, s, tw, th) for s in d["units"]] for u in flow])

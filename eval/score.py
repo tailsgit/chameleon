@@ -53,6 +53,8 @@ ROW_GAP = 0.1                # side-by-side units closer than this (x canvas wid
 FOCUS_OFF_CANVAS = 0.35      # ...or, alone in its column, this far from the canvas centre (x canvas width)
 FOCUS_FREE = 0.05            # off-centre by less than this is centred
 SCALE_FREE, SCALE_FULL = 1.0, 0.4  # headline/hero at this share of the size the target affords: no / full penalty
+KEY_FREE, KEY_FULL = 0.85, 0.5  # headline/main image at this share of the scale the target affords: no / full penalty
+KEY_SQUEEZE_FREE, KEY_SQUEEZE_FULL = 0.6, 0.25  # a cropped main photo's box aspect vs the source's (smaller/larger)
 HERO_MIN_AREA = 0.05         # the largest foreground image is the hero when it covers this share of the source
 HOLDER_MAX_AREA = 0.5       # a card/bubble/label/button holding text covers less than this share of the canvas
 HOLDER_MAX_ASPECT = 4.0      # ...and, if an image, is at most this elongated (a long bar is a backdrop, not a card)
@@ -207,6 +209,52 @@ def scale_penalty(c: Ctx):
         if p:
             notes.append(f"{i} at {r:.2f} of its size")
     return (sum(out) / len(out) if out else 0.0), ", ".join(notes)
+
+
+def key_size_penalty(c: Ctx):
+    """The most important content must keep its share of the canvas: the headline (the
+    biggest-looking text) and the main image (the largest non-background image, alone or
+    inside a group). Each one's output scale (square root of its drawn area ratio) over the
+    scale the target affords it (the area ratio's square root, or less when an image at its
+    own aspect cannot fit that). KEY_FREE or more is free, KEY_FULL or less costs 1, steeply
+    in between. A cover-cropped main image whose box was cut to a sliver (aspect changed by
+    more than KEY_SQUEEZE_FREE) costs too. Penalty = the worst of these: either one
+    shrinking is a failure, and decorations are not measured at all."""
+    area = math.sqrt(c.tw * c.th / (c.sw * c.sh))
+    pens = []
+    h, m = key_elements(c.source)
+    if h is not None and h in c.out:
+        r = math.sqrt(_area(c.out_box[h]) / max(_area(c.src_box[h]), 1e-9)) / area  # text re-wraps: any shape fits
+        pens.append((_steep(KEY_FREE, KEY_FULL, r), f"headline {h} at {r:.2f} of its share"))
+    if m is not None and m in c.out:
+        sb, ob = c.src_box[m], c.out_box[m]
+        w, h = sb[2] - sb[0], sb[3] - sb[1]
+        r = math.sqrt(_area(ob) / max(w * h, 1e-9)) / min(area, c.tw / max(w, 1e-9), c.th / max(h, 1e-9))
+        pens.append((_steep(KEY_FREE, KEY_FULL, r), f"main image {m} at {r:.2f} of its share"))
+        q = (ob[2] - ob[0]) / max(ob[3] - ob[1], 1e-9) / (w / max(h, 1e-9))
+        q = min(q, 1 / max(q, 1e-9))
+        pens.append((_steep(KEY_SQUEEZE_FREE, KEY_SQUEEZE_FULL, q), f"main image {m} squeezed to {q:.2f} of its aspect"))
+    worst = max(pens, default=(0.0, ""))
+    return worst[0], worst[1] if worst[0] > 0 else ""
+
+
+def key_elements(source):
+    """(headline id, main image id) of a design, either None: the biggest-looking text, and the
+    largest non-background image covering at least HERO_MIN_AREA of the canvas (alone or in a
+    group). Shared with engine.resize, which guards retrieved layouts with the same two."""
+    sw, sh = source["canvas"]["width"], source["canvas"]["height"]
+    els = source["elements"]
+    texts = [e for e in els if e["type"] == "text"]
+    head = max(texts, key=_visual_size)["id"] if texts else None
+    imgs = [e for e in els if e["type"] == "image" and not _is_background(e, sw, sh)]
+    main = max(imgs, key=lambda e: _area(_drawn_box(e)), default=None)
+    return head, main["id"] if main and _area(_drawn_box(main)) >= HERO_MIN_AREA * sw * sh else None
+
+
+def _steep(free, full, r):
+    """0 at r >= free, 1 at r <= full, rising fast in between (half way already costs 0.75)."""
+    t = min(1.0, max(0.0, (free - r) / (free - full)))
+    return t * (2 - t)
 
 
 def space_penalty(c: Ctx):
@@ -443,20 +491,24 @@ def _contrast_ratios(design_json):
     return out
 
 
-PENALTIES = {  # name: (function, weight, needs_render). Weights fitted to the hand labels: python -m eval.calibrate --fit
-    "overlap": (overlap_penalty, 0.48, False),
-    "holders": (holders_penalty, 1.0, False),
-    "small_text": (small_text_penalty, 0.8, False),
-    "headline": (headline_penalty, 1.23, False),
-    "scale": (scale_penalty, 1.0, False),
-    "space": (space_penalty, 1.46, False),
-    "balance": (balance_penalty, 1.96, False),
-    "floating": (floating_penalty, 1.0, False),
-    "emphasis": (emphasis_penalty, 0.95, False),  # agreement is the same at the floor or here; kept by request
-    "siblings": (siblings_penalty, 0.61, False),
-    "alignment": (alignment_penalty, 0.55, False),
-    "reading_order": (reading_order_penalty, 0.48, False),
-    "contrast": (contrast_penalty, 0.48, True),
+PENALTIES = {  # name: (function, weight, needs_render). Fitted to all hand labels (samples, crello-dev,
+    # crello-retrieval-review): python -m eval.calibrate --fit --suite samples,crello-dev,crello-retrieval-review
+    # key_size is pinned at 2.0 (the fit leaves it at the floor because the sample labels pull the other way):
+    # shrinking the headline or main image must cost far more than anything else. emphasis is kept by request.
+    "overlap": (overlap_penalty, 0.5, False),
+    "holders": (holders_penalty, 0.5, False),
+    "small_text": (small_text_penalty, 1.16, False),
+    "headline": (headline_penalty, 0.83, False),
+    "scale": (scale_penalty, 0.68, False),
+    "key_size": (key_size_penalty, 2.0, False),
+    "space": (space_penalty, 1.15, False),
+    "balance": (balance_penalty, 1.38, False),
+    "floating": (floating_penalty, 0.5, False),
+    "emphasis": (emphasis_penalty, 0.95, False),
+    "siblings": (siblings_penalty, 0.5, False),
+    "alignment": (alignment_penalty, 0.68, False),
+    "reading_order": (reading_order_penalty, 0.63, False),
+    "contrast": (contrast_penalty, 0.5, True),
 }
 
 

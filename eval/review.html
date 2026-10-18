@@ -152,7 +152,7 @@ function card(c) {
     el("div", { class: "trio" },
       el("figure", {}, stage(c.source_png, `Original design ${c.sample}`), el("figcaption", {}, "Original, original size")),
       c.before_png
-        ? el("figure", {}, stage(c.before_png, `Earlier output for ${c.format}`), el("figcaption", {}, "Before (without retrieval)"))
+        ? el("figure", {}, stage(c.before_png, `Earlier output for ${c.format}`), el("figcaption", {}, "Before (see summary)"))
         : el("figure", {}, stage(c.stretch_png, `Naive stretch of ${c.sample} to ${c.format}`), el("figcaption", {}, "Naive stretch (starter)")),
       el("figure", {}, stage(c.output_png, `Our output for ${c.format}`), el("figcaption", {}, "Our engine"))),
     el("table", { "aria-label": "Penalty breakdown (0 = perfect, 1 = worst)" }, el("tbody", {}, ...rows)),

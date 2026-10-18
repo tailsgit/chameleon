@@ -3,6 +3,7 @@
     python -m eval.calibrate          # agreement of the recorded scores and of the current scorer
     python -m eval.calibrate --fit    # also fit the weights to the labels (paste them into PENALTIES)
     python -m eval.calibrate --suite crello-dev   # the labels given on that suite's review page
+    python -m eval.calibrate --fit --suite samples,crello-dev,crello-retrieval-review   # several label sets together
 
 Every label in eval/results/labels.json, current or in a case's history, carries
 the exact output JSON it was given on, so labels from every engine version are
@@ -126,7 +127,7 @@ def main():
     ap.add_argument("--fit", action="store_true")
     ap.add_argument("--suite", default="samples", help="whose labels: samples (eval/results) or e.g. crello-dev")
     args = ap.parse_args()
-    cases = load(args.suite)
+    cases = [c for s in args.suite.split(",") for c in load(s)]
     print(f"{'':<46} pairwise  pairwise  tau_b    auc")
     print(f"{'':<46} all       within design")
     report([c["recorded"] for c in cases], cases, "old scorer (the scores you labelled against)")

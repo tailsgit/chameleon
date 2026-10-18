@@ -21,7 +21,9 @@ Recipes:
   retrieved  layouts of real designs of a similar shape and composition (engine.retrieve)
 """
 
+import logging
 import math
+import time
 from dataclasses import dataclass, field
 from itertools import combinations, product
 
@@ -40,6 +42,7 @@ HERO_SHARE = 0.25   # a hero covering this share of the source canvas gets the a
 HERO_SIDE_MAX = 0.65  # ...and at most this share of the target's width (or height) in it
 COL_ASPECT = 1.5    # a box this much wider than tall may lay its units out in 2 or 3 columns...
 COL_GAIN = 1.15     # ...when one column hits the readable floor and columns raise the scale this much
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -66,16 +69,22 @@ class Plan:
     sizer: Sizer = field(repr=False, default=None)
 
 
-def generate(a, tw, th):
-    """All candidate plans for one task: every applicable recipe x its knob grid."""
+def generate(a, tw, th, deadline=None):
+    """All candidate plans for one task: every applicable recipe x its knob grid, then the
+    retrieved layouts. Past `deadline` (time.monotonic()), nothing more is added."""
     sizer = Sizer(a, tw, th)
     hero = a.by_role("hero")
     has_hero = hero is not None and not hero.floating
     aspect = tw / th
     tiny = min(tw, th) < 200 or tw * th < 120_000
-    plans = []
+    plans, cut = [], []
 
     def add(fn, name, **knobs):
+        if plans and deadline is not None and time.monotonic() > deadline:
+            if not cut:
+                log.info("time budget reached after %d plans", len(plans))
+                cut.append(name)
+            return
         plan = fn(a, sizer, tw, th, **knobs)
         if plan is not None:
             plan.recipe, plan.knobs, plan.sizer = name, knobs, sizer
@@ -105,7 +114,7 @@ def generate(a, tw, th):
                 add(strip, "compact", hero_pos="left", img_mult=1.0, align=align, cap=cap, primaries_only=True)
             else:
                 add(stack, "compact", align=align, vjust="spread", img_mult=1.0, cap=cap, order="source", primaries_only=True)
-    return plans + retrieved(a, sizer, tw, th)
+    return plans + (retrieved(a, sizer, tw, th, deadline) if not cut else [])
 
 
 # --- recipes ------------------------------------------------------------------

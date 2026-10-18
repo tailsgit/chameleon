@@ -2,7 +2,7 @@
 
 1. Drop duplicate candidates and any with a hard-rule violation (eval.check).
 2. Rank the rest by the geometric score (eval.score, ~1 ms each), render the top
-   RENDER_TOP and pick the best full score including contrast. Rendering is
+   RENDER_TOP (fewer once the deadline has passed) and pick the best full score including contrast. Rendering is
    expensive under amd64 emulation, so only those few get rendered. A `preferred`
    candidate (the source scaled uniformly, when the aspect ratio barely changes)
    wins unless another beats it by more than PREFER_MARGIN points.
@@ -15,6 +15,7 @@ import copy
 import json
 import logging
 import math
+import time
 
 from engine.analyze import full_box
 from eval.check import check, text_layout
@@ -25,7 +26,7 @@ PREFER_MARGIN = 2.0  # points out of 100: "clearly better" than the preferred ca
 log = logging.getLogger(__name__)
 
 
-def select(source, target, outputs, preferred=None):
+def select(source, target, outputs, preferred=None, deadline=None):
     pref_key = json.dumps(preferred, sort_keys=True) if preferred is not None else None
     bonus = lambda o: PREFER_MARGIN if pref_key and json.dumps(o, sort_keys=True) == pref_key else 0.0
     seen, unique = set(), []
@@ -38,11 +39,17 @@ def select(source, target, outputs, preferred=None):
     passing = [(o, score(source, target, o)["total"] + bonus(o)) for o in unique if _passes(source, target, o)]
     if passing:
         top = sorted(passing, key=lambda t: -t[1])[:RENDER_TOP]
+        best, rendered = top[0][0], []
         try:
-            return max(top, key=lambda t: score(source, target, t[0], contrast=True)["total"] + bonus(t[0]))[0]
+            for o, _s in top:  # best geometric first; past the deadline, only what is already rendered counts
+                if deadline is not None and time.monotonic() > deadline:
+                    log.info("time budget reached after %d contrast renders", len(rendered))
+                    break
+                rendered.append((score(source, target, o, contrast=True)["total"] + bonus(o), o))
         except Exception:  # the renderer is unavailable: fall back to the geometric ranking
             log.exception("contrast scoring failed; using geometric ranking")
-            return top[0][0]
+            return best
+        return max(rendered, key=lambda t: t[0])[1] if rendered else best
 
     log.warning("no candidate passed check(); repairing %d candidates", len(unique))
     repaired = [repair(source, target, o) for o in unique] + [fallback(source, target)]
