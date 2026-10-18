@@ -592,3 +592,62 @@ Agreement with the labels held: pairwise 0.892, AUC 1.00 (unchanged).
   - Scorer: a compact stack or grid with nothing in it costs 0.25 (`SIBLING_RESTACK`). Members spread apart (union box over 2× their area, or looser than in the source) or with anything between them count as split (0.5).
   - Agreement: 0.868 pairwise, good-vs-bad 0.953.
   - Instagram Story and Post are readable again. LinkedIn Banner and Wide Skyscraper score 1.5 points lower: a readable stack costs more than the unreadable row it replaced.
+
+## 17. Crello test set (branch `crello`)
+
+### Conversion (`eval/crello_convert.py`)
+- **Input:** the three validation shards hold 1,852 designs. 1,794 converted; 58 were skipped:
+
+  | reason | designs |
+  |---|---|
+  | text our two fonts can't draw (mostly Cyrillic) | 40 |
+  | fewer than 3 elements | 12 |
+  | more than 40 elements | 3 |
+  | no text | 3 |
+  | conversion errors | 0 |
+  | schema violations | 0 |
+
+  Every converted design passes the v0.9 schema.
+- **Where things live:**
+  - Output goes outside the repo, to `../data/crello_chameleon/` (`$CRELLO_CHAMELEON`): designs, PNG crops, previews and comparisons.
+  - The renderer, scorer and engine find assets through `$CHAMELEON_ASSETS` (`eval.render.assets_dir()`). It defaults to `brand_kit/assets`, so Docker is unchanged.
+  - Nothing from Crello is committed. Only `cases.csv` and `summary.md` of the Crello suites are, and they hold ids and numbers only.
+- **Fonts:** each Crello family maps to Solstice Serif (serif and slab faces) or Solstice Sans (everything else). The mapping is in `eval/crello_fonts.json`.
+  - Our sans is wider than Crello's condensed display faces (Bebas Neue, Oswald...). So 2,270 of 7,594 texts had their font size reduced until they wrap to Crello's own line count. The median factor was 0.84; 167 hit the 50% floor.
+- **Images:**
+  - An image that fills the canvas is `cover`; every other image is `contain`, so the checker's image-proportion rule applies.
+  - Bleeding unrotated images are cut to the canvas, pixels included.
+  - Rotations under 0.5° are treated as editor noise and become 0.
+- **Visual check:** 20 conversions were rendered next to Crello's previews (`compare/_sheet.png`). Layout, colours, images and rotation match; the only differences are the substituted fonts.
+
+### Test set (`eval/crello_testset.py`, `eval/crello_testset.json`: ids and sizes only)
+- 300 designs, drawn round-robin over (format, element-count band, aspect band) buckets, covering 60+ formats, 3–40 elements, and aspect ratios 0.3–8.1.
+- Each design is paired with 3 random catalogue sizes, never its own size.
+- The split is by design:
+  - **Dev:** 200 designs, 600 cases.
+  - **Holdout:** 100 designs, 300 cases. Holdout is only ever run to check for overfitting; never tune on it.
+- **Bench:** `python -m eval.bench --suite {samples,crello-dev,crello-holdout} [--render] [--jobs N]`.
+- **Review page:** `python -m eval.review_server --results eval/results/crello-dev --worst 30`. Crello labels stay in that folder and are gitignored.
+
+### First crello-dev run (engine `d7352fe`, no engine changes)
+
+| measure | result |
+|---|---|
+| Pass rate | 589/600 (98.2%) |
+| Average score | 90.17 (the samples suite: 95.78) |
+| Crashes | 0 |
+| Fallbacks | 0 |
+| Failed layout candidates | 0 |
+
+- **Failures:**
+  - **`hidden_element`, 8 cases (13 elements):** full-width 1–2px hairline images scaled below 1px. Decorations are placed without the 1.5px minimum the other paths use.
+  - **`background_not_full_canvas`, 3 cases (one design):** a full-canvas photo rotated 180°. The engine only recognises unrotated backgrounds.
+- **Timing:**
+  - Sequential, 30 cases: mean 2.2 s, median 1.7 s, max 7.6 s.
+  - In the 8-process run: mean 3.7 s, p95 10 s, max 17.6 s.
+  - Larger designs are slower: candidates × text layout.
+- **What breaks, by eye (worst 30):**
+  - Text on an image card or bubble (an SVG speech drop, paper card or photo frame) is separated from it: the engine only treats shapes as containers. Cards end up empty and text floats free.
+  - Big photos that don't fill the canvas are not treated as background: they shrink, and text shrinks with them on wide banners.
+  - Multi-column grid designs (storyboards, menus) collapse into one long column.
+  - `floating` (0.40) and `scale` (0.25) are the largest mean penalties.
