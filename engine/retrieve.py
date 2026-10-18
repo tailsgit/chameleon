@@ -12,11 +12,14 @@ geometry and roles of real designs, as our analyzer sees them. For a task:
 4. size each mapped unit inside its slot with the same Sizer the recipes use (text: the
    largest font whose wrapped lines fit the slot; images and groups: one uniform scale,
    sibling rows and grids re-flowed), so engine.fit applies the same rules to these plans.
+
+Switch: CHAMELEON_RETRIEVAL=0 in the environment turns retrieval off (recipes only).
 """
 
 import json
 import logging
 import math
+import os
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -44,7 +47,9 @@ def library():
 
 def retrieved(a, sizer, tw, th, deadline=None):
     """Up to TOP_K plans, one per retrieved design, best composition match first; none
-    more once `deadline` (time.monotonic()) has passed."""
+    more once `deadline` (time.monotonic()) has passed. None when switched off (see module doc)."""
+    if os.environ.get("CHAMELEON_RETRIEVAL", "1") == "0":
+        return []
     from engine.recipes import Plan, margin  # recipes imports nothing from here; avoids a cycle at import time
 
     want = math.log(tw / th)

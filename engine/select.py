@@ -1,6 +1,7 @@
 """Choose the winning candidate, and the safety nets behind it.
 
-1. Drop duplicate candidates and any with a hard-rule violation (eval.check).
+1. Drop duplicate candidates and any with a hard-rule violation (eval.check), then any that
+   put text newly on top of a busy image (eval.score.busy_text_over_image), unless that is all of them.
 2. Rank the rest by the geometric score (eval.score, ~1 ms each), render the top
    RENDER_TOP (fewer once the deadline has passed) and pick the best full score including contrast. Rendering is
    expensive under amd64 emulation, so only those few get rendered. A `preferred`
@@ -19,7 +20,7 @@ import time
 
 from engine.analyze import full_box
 from eval.check import check, text_layout
-from eval.score import score
+from eval.score import busy_text_over_image, score
 
 RENDER_TOP = 10
 PREFER_MARGIN = 2.0  # points out of 100: "clearly better" than the preferred candidate
@@ -37,6 +38,10 @@ def select(source, target, outputs, preferred=None, deadline=None):
             unique.append(o)
 
     passing = [(o, score(source, target, o)["total"] + bonus(o)) for o in unique if _passes(source, target, o)]
+    clean = [(o, s) for o, s in passing if not busy_text_over_image(source, target, o)]
+    if clean and len(clean) < len(passing):
+        log.info("rejected %d candidates with text newly on a busy image", len(passing) - len(clean))
+    passing = clean or passing  # never left with nothing: then the least bad still competes on score
     if passing:
         top = sorted(passing, key=lambda t: -t[1])[:RENDER_TOP]
         best, rendered = top[0][0], []

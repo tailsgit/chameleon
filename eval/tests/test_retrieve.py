@@ -85,3 +85,31 @@ def test_time_budget_still_returns_a_valid_output(monkeypatch, budget, caplog):
     assert check(src, target, out) == []
     if budget == 0.0:
         assert any(r.getMessage().startswith("time budget reached") for r in caplog.records)
+
+
+def test_switch_turns_retrieval_off(monkeypatch):
+    a = analyze(_sample())
+    sizer = Sizer(a, 1920, 1080)
+    assert retrieve.retrieved(a, sizer, 1920, 1080)  # on by default: the library has wide layouts
+    monkeypatch.setenv("CHAMELEON_RETRIEVAL", "0")
+    assert retrieve.retrieved(a, sizer, 1920, 1080) == []
+
+
+def test_text_newly_on_a_busy_image_is_rejected(tmp_path, monkeypatch):
+    import numpy as np
+    from PIL import Image
+    import eval.score as score_mod
+    from engine.select import select
+    Image.fromarray(np.random.default_rng(1).integers(0, 255, (128, 128, 3), dtype=np.uint8)).save(tmp_path / "busy.png")
+    monkeypatch.setenv("CHAMELEON_ASSETS", str(tmp_path))
+    score_mod._asset_grey.cache_clear()
+    src = {"canvas": {"width": 1000, "height": 500}, "elements": [
+        {"id": "photo", "type": "image", "x": 0, "y": 0, "width": 500, "height": 500, "asset_id": "busy.png", "fit": "cover", "z_index": 0},
+        {"id": "title", "type": "text", "x": 560, "y": 200, "width": 400, "height": 100, "content": "Title", "font_family": "Solstice Sans",
+         "font_size": 60, "color": "rgba(0,0,0,1)", "z_index": 1}]}
+    on_photo = {"canvas": src["canvas"], "elements": [dict(src["elements"][0]), dict(src["elements"][1], x=60)]}
+    assert score_mod.busy_text_over_image(src, src["canvas"], on_photo) == [("title", "photo")]
+    assert score_mod.busy_text_over_image(src, src["canvas"], src) == []
+    assert select(src, src["canvas"], [on_photo, src]) is not on_photo
+    assert select(src, src["canvas"], [on_photo]) is on_photo  # if that is all there is, it is still returned
+    score_mod._asset_grey.cache_clear()

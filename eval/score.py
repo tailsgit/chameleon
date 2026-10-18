@@ -53,6 +53,11 @@ ROW_GAP = 0.1                # side-by-side units closer than this (x canvas wid
 FOCUS_OFF_CANVAS = 0.35      # ...or, alone in its column, this far from the canvas centre (x canvas width)
 FOCUS_FREE = 0.05            # off-centre by less than this is centred
 SCALE_FREE, SCALE_FULL = 1.0, 0.4  # headline/hero at this share of the size the target affords: no / full penalty
+OVER_FREE, OVER_FULL = 0.05, 0.5  # share of a text newly on top of an image: no / full penalty
+BUSY_COVER = 0.2             # a text newly this much on top of an image...
+BUSY = 0.02                  # ...whose pixels under it vary this much (mean |gradient|, 0-1 grey) is rejected outright
+                             # (text designers put on images: median 0.000, 75th percentile 0.008; the headline
+                             # retrieval put on bamboo 0.035, on a photo 0.057)
 KEY_FREE, KEY_FULL = 0.85, 0.5  # headline/main image at this share of the scale the target affords: no / full penalty
 KEY_SQUEEZE_FREE, KEY_SQUEEZE_FULL = 0.6, 0.25  # a cropped main photo's box aspect vs the source's (smaller/larger)
 HERO_MIN_AREA = 0.05         # the largest foreground image is the hero when it covers this share of the source
@@ -209,6 +214,94 @@ def scale_penalty(c: Ctx):
         if p:
             notes.append(f"{i} at {r:.2f} of its size")
     return (sum(out) / len(out) if out else 0.0), ", ".join(notes)
+
+
+def text_over_image_penalty(c: Ctx):
+    """Text (alone or in a group) newly placed on top of a non-background image breaks a
+    relationship the design did not have: per text, the share of its drawn box covered by
+    images in the output, minus the same share in the source (each image counted separately,
+    capped at 1). OVER_FREE or less is free, OVER_FULL or more costs 1. Penalty = the worst text."""
+    worst, note = 0.0, ""
+    for t, more, img in _new_text_over_image(c):
+        p = min(1.0, max(0.0, (more - OVER_FREE) / (OVER_FULL - OVER_FREE)))
+        if p > worst:
+            worst, note = p, f"{t} newly {more:.0%} on {img}"
+    return worst, note
+
+
+def _new_text_over_image(c):
+    """[(text id, newly covered share of its drawn box, the image covering most of it)]."""
+    imgs = [i for i, e in c.src.items() if e["type"] == "image" and i in c.out and not _is_background(e, c.sw, c.sh)]
+    out = []
+    for t, e in c.src.items():
+        if e["type"] != "text" or t not in c.out:
+            continue
+        sa, oa = max(_area(c.src_box[t]), 1e-9), max(_area(c.out_box[t]), 1e-9)
+        incs = {i: _inter(c.out_box[t], c.out_box[i]) / oa - _inter(c.src_box[t], c.src_box[i]) / sa for i in imgs}
+        more = min(1.0, sum(v for v in incs.values() if v > 0))
+        if more > 0:
+            out.append((t, more, max(incs, key=incs.get)))
+    return out
+
+
+def busy_text_over_image(source, target_canvas, output):
+    """[(text id, image id)] where a text newly covers BUSY_COVER of itself with one image and that
+    image is busy under it: the engine rejects such a candidate (a headline on a photo or plant it
+    was never on). Rotation is ignored when mapping the text onto the image's pixels."""
+    c = _context(source, target_canvas, output)
+    els = {e["id"]: e for e in output["elements"]}
+    bad = []
+    for t, _more, _img in _new_text_over_image(c):
+        for i, e in c.src.items():
+            if e["type"] != "image" or i not in c.out or _is_background(e, c.sw, c.sh):
+                continue
+            ob = c.out_box[t]
+            inc = _inter(ob, c.out_box[i]) / max(_area(ob), 1e-9) - _inter(c.src_box[t], c.src_box[i]) / max(_area(c.src_box[t]), 1e-9)
+            if inc >= BUSY_COVER and _busyness(els[i], ob) > BUSY:
+                bad.append((t, i))
+    return bad
+
+
+@lru_cache(maxsize=128)
+def _asset_grey(asset_id):
+    """(grey 0-1, alpha 0-1, scale) of an asset at most 256 px on its long side; None if missing."""
+    try:
+        with Image.open(assets_dir() / asset_id) as im:
+            im = im.convert("RGBA")
+            k = min(1.0, 256 / max(im.size))
+            small = im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))))
+    except (OSError, TypeError):
+        return None
+    a = np.asarray(small, dtype=np.float32) / 255
+    return a[..., :3].mean(axis=2), a[..., 3], k
+
+
+def _busyness(el, region):
+    """Mean |gradient| of the image's pixels under `region` (canvas coords), with transparent pixels
+    counting as flat, mapped through the renderer's fit (contain letterboxes, cover centre-crops)."""
+    g = _asset_grey(el.get("asset_id"))
+    if g is None:
+        return 0.0
+    grey, alpha, k = g
+    ih, iw = grey.shape
+    x, y, w, h = el["x"], el["y"], el["width"], el["height"]
+    fit = el.get("fit", "contain")
+    if fit in ("contain", "cover"):
+        s = (min if fit == "contain" else max)(w / iw, h / ih)
+        sx = sy = s
+    else:
+        sx, sy = w / iw, h / ih
+    ox, oy = x + (w - iw * sx) / 2, y + (h - ih * sy) / 2
+    c0, c1 = int(max(0, (region[0] - ox) / sx)), int(min(iw, math.ceil((region[2] - ox) / sx)))
+    r0, r1 = int(max(0, (region[1] - oy) / sy)), int(min(ih, math.ceil((region[3] - oy) / sy)))
+    if c1 - c0 < 2 or r1 - r0 < 2:
+        return 0.0
+    v = grey[r0:r1, c0:c1] * alpha[r0:r1, c0:c1]
+    return float((np.abs(np.diff(v, axis=1))[:-1] + np.abs(np.diff(v, axis=0))[:, :-1]).mean())
+
+
+def _inter(a, b):
+    return _area((max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])))
 
 
 def key_size_penalty(c: Ctx):
@@ -501,6 +594,7 @@ PENALTIES = {  # name: (function, weight, needs_render). Fitted to all hand labe
     "headline": (headline_penalty, 0.83, False),
     "scale": (scale_penalty, 0.68, False),
     "key_size": (key_size_penalty, 2.0, False),
+    "text_over_image": (text_over_image_penalty, 3.0, False),  # pinned like key_size: free fit 0.63
     "space": (space_penalty, 1.15, False),
     "balance": (balance_penalty, 1.38, False),
     "floating": (floating_penalty, 0.5, False),
