@@ -20,15 +20,14 @@ Recipes:
 import math
 from dataclasses import dataclass, field
 from itertools import product
-from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
 from engine.analyze import PRIMARY_ROLES
 from engine.fit import Sizer
+from eval.render import assets_dir
 
-ASSETS_DIR = Path(__file__).resolve().parents[1] / "brand_kit" / "assets"
 GAP = 0.03          # vertical gap between rows, fraction of the column's shorter side
 H_GAP = 0.03        # horizontal gap between strip cells, fraction of the canvas width
 BISECT_STEPS = 16
@@ -292,7 +291,7 @@ def quiet_regions(a, tw, th):
     the mean gradient of the background image as the renderer will crop it.
     Empty when there is no background image (nothing to be quiet against)."""
     bg = next((a.els[i] for i in a.background if a.els[i]["type"] == "image"), None)
-    path = ASSETS_DIR / bg["asset_id"] if bg else None
+    path = assets_dir() / bg["asset_id"] if bg else None
     if not path or not path.is_file():
         return []
     try:

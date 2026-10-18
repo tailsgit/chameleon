@@ -1,9 +1,12 @@
-# Benchmark summary
+# Benchmark summary: samples
 
-Engine commit `e7b2392`, 45 cases (3 samples x 15 formats), render=yes, contrast=no.
+Engine commit `8cc9f28-dirty`, 45 cases (3 designs), render=no, contrast=no, jobs=1.
 
-- **Cases passing every hard rule: 45/45**
+- **Cases passing every hard rule: 45/45** (100.0%)
 - **Average score: 95.78** / 100
+- Crashes (resize raised): 0
+- Engine fell back to a plain uniform scale: 0 cases
+- Cases where some layout candidate raised (others used): 0
 
 ## Violations by rule
 
@@ -39,7 +42,7 @@ Engine commit `e7b2392`, 45 cases (3 samples x 15 formats), render=yes, contrast
 
 ## Timings (per case, this machine)
 
-- resize: mean 1665.04 ms, median 1719.83 ms, max 4418.12 ms
-- check: mean 1.45 ms, median 1.20 ms, max 3.38 ms
-- score: mean 1.80 ms, median 1.33 ms, max 4.38 ms
-- render: mean 76.62 ms, median 75.54 ms, max 154.52 ms
+- resize: mean 1656 ms, median 1712 ms, p95 2773 ms, max 4422 ms
+- check: mean 1 ms, median 1 ms, p95 2 ms, max 3 ms
+- score: mean 2 ms, median 1 ms, p95 3 ms, max 4 ms
+- render: n/a

@@ -25,3 +25,10 @@ output/*
 eval/results/renders/
 eval/results/contact_sheet.png
 eval/results/outputs/
+
+# Crello suites: outputs, renders and labels contain Crello content (text, images). Only
+# summary.md and cases.csv are committed. The converted designs live outside the repo.
+eval/results/crello-*/outputs/
+eval/results/crello-*/renders/
+eval/results/crello-*/labels.json
+eval/results/crello-*/.labels.*

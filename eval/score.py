@@ -27,7 +27,7 @@ import numpy as np
 from PIL import Image
 
 from eval.check import _font_manager, rotated_bbox, text_layout
-from eval.render import ASSETS_DIR
+from eval.render import assets_dir
 from renderer.converter.colorutil import parse_rgba
 
 # --- tunables -----------------------------------------------------------------
@@ -463,7 +463,7 @@ def _is_decoration(el):
 @lru_cache(maxsize=64)
 def _asset_size(asset_id):
     try:
-        with Image.open(ASSETS_DIR / asset_id) as im:
+        with Image.open(assets_dir() / asset_id) as im:
             return im.size
     except (OSError, TypeError):
         return None  # missing asset: renderer draws a placeholder filling the box
@@ -776,7 +776,7 @@ def _siblings_cached(source_json):
 @lru_cache(maxsize=64)
 def _asset_mean_rgb(asset_id):
     try:
-        with Image.open(ASSETS_DIR / asset_id) as im:
+        with Image.open(assets_dir() / asset_id) as im:
             im = im.convert("RGBA").resize((32, 32))
             px = np.asarray(im, dtype=np.float64)
     except (OSError, TypeError, ValueError):

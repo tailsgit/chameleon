@@ -2,6 +2,7 @@
 
     python -m eval.bench --render       # produce eval/results/{cases.csv,renders/}
     python -m eval.review_server        # then open http://127.0.0.1:8765
+    python -m eval.review_server --results eval/results/crello-dev --worst 30
 
 Serves eval/review.html, the renders, the per-case results, and saves Good / Okay /
 Bad verdicts to eval/results/labels.json (written atomically on every click).
@@ -29,6 +30,7 @@ RENDERS = RESULTS / "renders"
 OUTPUTS = RESULTS / "outputs"
 LABELS = RESULTS / "labels.json"
 VERDICTS = {"good", "okay", "bad"}
+WORST = None  # --worst N: only the N worst cases (failures first, then lowest score)
 _lock = threading.Lock()
 
 
@@ -50,6 +52,8 @@ def load_cases():
             "source_png": f"/renders/source__{r['sample']}.png" if (RENDERS / f"source__{r['sample']}.png").is_file() else None,
             "stretch_png": f"/renders/stretch__{r['case']}.png" if (RENDERS / f"stretch__{r['case']}.png").is_file() else None,
         })
+    if WORST:
+        cases = sorted(cases, key=lambda c: (c["passed"], c["total"]))[:WORST]
     return cases
 
 
@@ -159,7 +163,12 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--results", type=Path, default=RESULTS,
+                    help="a bench results folder, e.g. eval/results/crello-dev (its labels.json lives there too)")
+    ap.add_argument("--worst", type=int, help="show only the N worst cases")
     args = ap.parse_args()
+    RESULTS = args.results.resolve()
+    RENDERS, OUTPUTS, LABELS, WORST = RESULTS / "renders", RESULTS / "outputs", RESULTS / "labels.json", args.worst
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"Review page: http://127.0.0.1:{args.port}  (labels -> {LABELS})", flush=True)
     server.serve_forever()

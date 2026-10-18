@@ -95,3 +95,10 @@ def test_refuses_a_verdict_without_an_output_snapshot(server):
     with pytest.raises(urllib.error.HTTPError) as e:
         post(url, {"case": "s__a", "verdict": "good"})
     assert e.value.code == 409 and not (tmp / "labels.json").exists()
+
+
+def test_worst_shows_failures_first(server, monkeypatch):
+    url, _ = server
+    monkeypatch.setattr(rs, "WORST", 1)
+    data = json.loads(urllib.request.urlopen(url + "/api/cases").read())
+    assert [c["case"] for c in data["cases"]] == ["s__b"]  # the failing case, though s__a scores lower than 100
