@@ -992,3 +992,55 @@ Dev and holdout both beat v2, and by eye it is clearly better: merged into main 
   - A pre-merge round (dev + structure + holdout + samples + Docker) is about 23 min, against 60-70 min when baselines were regenerated every round.
 - **Noise floor:** the same code run twice changed 2 of the 100 quick outputs (-0.32 average). The time budget cuts at different points under different load, so differences that small are noise.
 - **Process:** quick suite + snapshot compare while iterating; full suites and the Docker check only before a merge; with/without switches only on request.
+
+## 26. Legibility rules (branch `contrast`, not merged); extreme shape changes on v3
+
+### Rules
+- **Backdrop rule:** a text that sat at least 95% on an element (its smallest non-text, non-background backdrop) must stay at least 90% on it.
+- **Contrast rule:** a text's contrast must not fall below half the source's and below 3:1. Contrast is estimated without rendering: the layers under the text's box are composited at 32x8 points, images sampled from their assets through their fit, and the 25th percentile of the WCAG ratios is taken. Against real renders: log correlation 0.93, 95% agreement on whether a text is under 3:1, 8 ms per design.
+- **Selection:** tiered, so the filters no longer trap each other: legible first, then not on a busy image, then large elements keep their share. If nothing is legible: fewest texts that lost contrast, then the other tiers, then mean contrast kept.
+
+### Results
+- **As specified** (full suites; v3 = the same engine without the rules): dev 89.28 -> 86.77, holdout 89.18 -> 86.51, structure 82.74 -> 79.38, samples unchanged. Docker: 45/45, slowest 13.1 s.
+  - The rules fired in 358 of 600 dev cases (87 with no legible candidate) and changed 174, of which 171 scored worse (-8.2 each).
+  - In v3's own outputs, text leaves its backdrop in 157 dev cases but contrast is lost in only 72. Almost every backdrop left is a large image (40-100% of the canvas): photos and illustrations, where leaving them usually doesn't matter.
+- **Narrowed:** the backdrop rule only for compact backdrops (under 40%: cards, labels, panels); contrast still guards the rest. Quick suite: 90.12 -> 88.24. The rules changed 17 cases (plus 2 from timing noise); the scorer calls all 17 worse.
+- **By eye** (`eval/results/crello-review-legibility`): about 7 better, 3 worse.
+  - Better: Lumos fashion (text back on its card), Circus, Valentine's (button label back), Makeup notes, Day of forests, Ocean, Pharmacy.
+  - Worse: Best value x2 (a poor fallback when nothing is legible), Fresh smoothie.
+- **Why the scorer disagrees:** `eval.bench` scores without the contrast penalty (it renders, so it's off by default), so the benchmark doesn't see white-on-white at all, and it does see the alternatives' smaller images.
+
+### Decision
+Not merged: dev and holdout drop. Next: a cheap contrast penalty in the default score (the no-render estimate), so the benchmark sees the failure the rules fix, and a better fallback than "best contrast" when nothing is legible.
+
+### Extreme shape changes on v3 (crello-dev, from the v3 snapshot)
+
+| aspect change | cases | average | pass | most frequent winners |
+|---|---|---|---|---|
+| same (< 1.1x) | 48 | 90.63 | 48 | uniform, preserve |
+| moderate (1.1-1.65x) | 161 | 90.66 | 159 | preserve, retrieved, stack |
+| large (1.65-3x) | 222 | 89.18 | 222 | retrieved, preserve, stack |
+| **extreme (>= 3x)** | **169** | **87.71** | **163** | retrieved 60, stack 41, preserve 16 |
+
+- **Points lost per case,** extreme vs the rest: key_size 3.24 vs 1.89, small_text 0.58 vs 0.23, relationships 1.43 vs 1.10, space 0.34 vs 0.15, reading_order 0.58 vs 0.40.
+- **10 worst** (score, case, source -> target aspect, winner):
+
+| score | case | aspect | winner |
+|---|---|---|---|
+| 50.8 | CV (Maya Rouge) | 0.71 -> 8.1, leaderboard | stack |
+| 51.4 | CV (Howard Love) | 0.71 -> 4.0, LinkedIn | stack |
+| 54.3 | Smart Cities | 3.0 -> 1.0 | preserve |
+| 57.7 | pistaliar sale tag | 1.0 -> 8.1, leaderboard | split |
+| 63.0 | Travel Gear | 1.78 -> 8.1, leaderboard | retrieved |
+| 63.1 | pistaliar | 1.0 -> 0.27, skyscraper | anchor |
+| 67.3 | Save 10% | 3.0 -> 0.27, skyscraper | stack |
+| 68.4 | Dessert | 0.71 -> 3.0, email header | strip |
+| 70.6 | Invoice | 0.71 -> 3.0, email header | stack |
+| 71.2 | The Ocean | 0.5 -> 1.78, X post | anchor |
+
+- **What goes wrong:**
+  1. **The canvas stays mostly empty:** Smart Cities, both pistaliar, Save 10%. Rigid groups (a price tag, a photo with its frame) and aspect-locked images can't grow into a canvas of the opposite shape. Nothing reflows to use the length, so the design shrinks to a small cluster.
+  2. **Photos lose their subject:** Travel Gear 1.78 -> 8.1 shows only a thin centred band (faces cut). Pistaliar's knit photo is a small fragment. The renderer's centred cover crop and the image aspect lock leave no other option.
+  3. **Text-heavy documents into banners:** CVs and the invoice. Columns, tables and panels are torn apart or crushed, and body text drops to the minimum. These have more text than a 728x90 strip can hold readably, and nothing may be removed.
+  4. **The scorer may be harsh:** Dessert and Ocean look reasonable but score about 70. key_size measures the headline by area share, which a headline can't keep on a 3:1 or 8:1 strip, so part of that penalty is unavoidable there.
+- **Failures:** 6 of the 8 dev failures are in this bucket, all hidden hairlines (as before).
