@@ -55,6 +55,8 @@ DECORATION_ALPHA = 0.5  # same threshold as eval.score
 EMPHASIS_BOOST = 0.15
 CARD_MAX_AREA = 0.5     # ...and up to this share of the canvas when it is flat (a card, not a photo)
 FLAT_STD = 25.0         # an image whose opaque pixels vary less than this (RGB std) is flat
+TEXT_ON_HOLDER = 0.8   # text this much on a card, blob or button drawn under it belongs to it (a tilted headline
+                       # on a brushstroke pokes out); other elements need 0.9
 LABEL_MAX_AREA = 0.05  # ...unless it is smaller than this share of the canvas
 CARD_MAX_ASPECT = 4.0   # an image holds text as a card only when at most this elongated
 GRID_SIZE = 1.15        # grid cells' anchors: width and height within this ratio of each other
@@ -173,7 +175,8 @@ def analyze(source):
             continue  # a divider stays a decoration: inside a rigid group it would shrink out of sight
         inner = element_box(els[i])
         for s in holders:
-            if s != i and z[s] < z[i] and _area(full_box(els[s])) > _area(inner) and _inside(inner, full_box(els[s])) >= 0.9:
+            if (s != i and z[s] < z[i] and _area(full_box(els[s])) > _area(inner)
+                    and _inside(inner, full_box(els[s])) >= (TEXT_ON_HOLDER if els[i]["type"] == "text" else 0.9)):
                 containment.append((s, i))
                 union(s, i)
                 break

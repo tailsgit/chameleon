@@ -20,11 +20,12 @@ import json
 import logging
 import math
 import os
-import time
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+
+from engine.clock import now
 
 log = logging.getLogger(__name__)
 LIBRARY = Path(__file__).parent / "data" / "layout_library.json"
@@ -47,7 +48,7 @@ def library():
 
 def retrieved(a, sizer, tw, th, deadline=None):
     """Up to TOP_K plans, one per retrieved design, best composition match first; none
-    more once `deadline` (time.monotonic()) has passed. None when switched off (see module doc)."""
+    more once `deadline` (now()) has passed. None when switched off (see module doc)."""
     if os.environ.get("CHAMELEON_RETRIEVAL", "1") == "0":
         return []
     from engine.recipes import Plan, margin  # recipes imports nothing from here; avoids a cycle at import time
@@ -60,7 +61,7 @@ def retrieved(a, sizer, tw, th, deadline=None):
     flow = [u for u in a.units.values() if not u.floating and not u.host]
     plans = []
     for rank, d in enumerate(near[:TOP_K]):
-        if deadline is not None and time.monotonic() > deadline:
+        if deadline is not None and now() > deadline:
             log.info("time budget reached after %d retrieved layouts", rank)
             break
         slots, used = [], []

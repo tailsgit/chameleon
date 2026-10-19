@@ -70,6 +70,7 @@ REL_OVERLAP = 0.2            # overlapping by this share of the smaller one's ar
                              # stacking; a few percent is incidental, e.g. a subhead's box touching a button)
 REL_TIGHT, REL_LOOSE = 0.35, 0.7  # close neighbours: their gap under this many times their gap to anything else
 REL_BLOCK_MAX = 0.5          # a proximity cluster may not grow past this share of the canvas
+REL_LOOSEN_ASPECT = 1.5     # from this aspect change on, something overlapping a picture may be moved off it
 REL_KEPT = 0.2               # a pair is kept when its relative offset moved by at most this (x pair size)
 LABEL_WORDS, LABEL_CHARS = 4, 32  # a label: at most this many words or characters, or ending in ':'
 OVER_FREE, OVER_FULL = 0.05, 0.5  # share of a text newly on top of an image: no / full penalty
@@ -517,11 +518,19 @@ def relationships_penalty(c: Ctx):
     (offset error <= REL_KEPT of the pair's size) and, for an overlap pair, they still overlap.
     Penalty = strength-weighted share of pairs broken."""
     rels = relations(c.source)
+    if abs(math.log((c.tw / c.th) / (c.sw / c.sh))) >= math.log(REL_LOOSEN_ASPECT):  # a callout may leave its picture
+        rels = [r for r in rels if not _on_picture(c, r)]
     if not rels:
         return 0.0, ""
     broken = [r for r in rels if not _kept(c, r)]
     total = sum(r["strength"] for r in rels)
     return sum(r["strength"] for r in broken) / total, ", ".join(f"{r['kind']} {r['a']}~{r['b']}" for r in broken[:5])
+
+
+def _on_picture(c, r):
+    """An overlap pair whose larger member is an image: a callout over a photo, not text on its own shape."""
+    big = max((r["a"], r["b"]), key=lambda i: _area(_drawn_box(c.src[i])))
+    return r["kind"] == "overlap" and c.src[big]["type"] == "image"
 
 
 def relations_kept(source, target_canvas, output):

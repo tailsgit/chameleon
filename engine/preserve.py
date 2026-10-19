@@ -27,10 +27,10 @@ on every machine.
 
 import logging
 import math
-import time
 
 from ortools.sat.python import cp_model
 
+from engine.clock import now
 from eval.score import relations
 
 log = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ def preserve_plans(a, sizer, tw, th, deadline=None):
         return []
     plans = []
     for v in VARIANTS:
-        if deadline is not None and time.monotonic() > deadline:
+        if deadline is not None and now() > deadline:
             log.info("time budget reached after %d preserve variants", len(plans))
             break
         sol = _solve(a, sizer, items, tw, th, v)

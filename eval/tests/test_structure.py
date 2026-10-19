@@ -143,7 +143,7 @@ def test_an_oversized_panel_fits_around_its_text():
     out = {e["id"]: e for e in res["elements"]}
     p, h = out["panel"], out["h"]
     assert p["x"] <= h["x"] and p["y"] <= h["y"]  # still behind its text...
-    assert p["width"] * p["height"] < 0.5 * 1920 * 1080  # ...but no longer a mostly empty square
+    assert p["width"] > 1.5 * p["height"]  # ...but no longer a mostly empty square: wide, like its one line
 
 
 def test_near_full_bleed_photo_and_colour_tiles_fill_the_target():

@@ -1112,3 +1112,45 @@ Not merged: dev and holdout drop. Next: a cheap contrast penalty in the default 
 - **Labels:** of the 13 legibility outputs labelled bad, v4 moves away from 12. Of the 4 labelled good, it keeps 2 unchanged.
 - **By eye** (`eval/results/crello-review-v4`, the 30 dev cases that changed most): about 12 better (Lumos, Paris x3, Offer, Valentine, Best value, Birds, Coffee) and about 9 worse. Rerun alone, every worse case scores at or within 2 points of v3 (e.g. Howard Love 83.3 vs 83.2, Warme Dusche 94.2 = v3): the full run's big drops come from the time budget under 8-worker load.
 - **Still weak:** Norma Wanns (v3's white text is invisible off its bar; v4's is legible but small), CVs and invoices in banners.
+
+## 29. Flat panels as shapes, fair benchmark timing, v5: split grid, text on its shape, fill, pinned accents (merged, tagged v5)
+
+- **Converter** (`eval/crello_convert.py`, `_flat_fill`): an image crop that is one flat colour over its whole box (opaque or evenly translucent, colour std under 4/255) becomes a rectangle shape of that colour. Photos, textures, gradients and shaped cut-outs (blobs, circles, rounded cards) stay images.
+  - Of 1,794 designs, 1,169 have converted elements: 2,894 in all (2,856 SVGs, 29 images, 9 masks). The 38 former images and masks are blank paper or solid colours.
+  - 20 designs with converted panels, rendered next to Crello's previews (`data/crello_chameleon/compare`), match apart from the substitute fonts.
+  - The same designs convert and the test-set files are unchanged, so the dev/holdout split is the same.
+- **Fair benchmark timing** (`engine/clock.py`): with `CHAMELEON_CPU_CLOCK=1` (set by `eval.bench`) the time budget runs on the process's CPU time, so parallel cases aren't cut short by the load. The Mac has 4 performance and 6 efficiency cores, so final full runs use `--jobs 4` too. Production (Docker) keeps wall-clock time.
+- **Baseline on the re-converted designs** (current scorer, 4 jobs, CPU clock; v3 run with the same clock patch):
+
+| Suite | v3 | v4 |
+|---|---|---|
+| quick | 91.99 | 92.10 |
+| dev | 91.44 | 91.58 |
+| structure | 87.55 | 87.86 |
+| holdout | 91.21 | 91.23 |
+| samples | 97.87 | 97.87 |
+
+  - Pass counts: 598/600, 120/120, 300/300 and 45/45 for both. The older snapshots are kept as `v3-preflat` and `v4-preflat`.
+- **Phase 3:**
+  1. **Split grid** (`engine/recipes.split`, recipe `split_grid`): on an aspect change of 1.5x or more, the hero takes one part of the canvas (left/right, or top/bottom on a tall canvas) and the rest is a column in the other part, with its size cap raised to 1.6 so a callout grows into its part. Extra candidates; `split` itself now also does top/bottom.
+  2. **Relationship strength by type:**
+     - Text at least 80% on a card, blob or button drawn under it joins that shape's rigid group (`TEXT_ON_HOLDER`; other elements still need 90%). At 60% a headline half on a panel and half on a photo (Bike to Work Day) became one rigid block that couldn't fit a skyscraper.
+     - In the scorer, an overlap pair whose larger member is an image (a callout over a photo) stops counting once the aspect ratio changes by 1.5x or more (`REL_LOOSEN_ASPECT`).
+  3. **Fill** (`engine/finish.fill`): the chosen layout's content block (everything but backgrounds, decorations and pinned accents) is scaled up as one, by up to 1.6x, and centred.
+  4. **Pinned accents** (`engine/finish.pin`): lone unrotated images (not the hero) under 15% of the canvas that sit within 5% of a source edge are pinned to the same edges or corners of the new canvas.
+  - Fill and pin make up to 3 variants of the chosen layout (`engine.select.better_variant`). A variant replaces it only if it passes `check()`, is in no worse a safety tier and scores higher. With a plain second `select`, a variant reaching a safer tier won even 13 points lower, and Docker's slowest case took 13.6 s.
+- **Gate** (against the new v4 snapshot, same scorer; 4 jobs, CPU clock):
+
+| Suite | v4 | v5 | Better / worse |
+|---|---|---|---|
+| quick | 91.98 | 92.07 | 13 / 7 |
+| dev | 91.51 | 91.49 | 91 / 27 |
+| structure | 87.67 | 87.62 | 25 / 10 |
+| holdout | 91.16 | 91.19 | 54 / 18 |
+
+  - Pass counts are unchanged. Samples: 97.94.
+  - Aspect buckets (dev + holdout): under 1.1x 93.93 -> 93.94, 1.1-1.65x 92.39 -> 92.48, 1.65-3x 90.88 -> 90.87, 3x and over 90.39 -> 90.32.
+  - Docker: 45/45, median 6.3 s, slowest 12.9 s.
+  - Winners in dev: the pinned/filled variants 73 of 600, `split_grid` a few.
+- **By eye** (`eval/results/crello-review-v5`, the 30 dev cases that changed most): about 13 better (My new review x2, Fashion Talks, Coffee, Invoice, Pharmacy, Cooking, Start of Tournament, Cozy playlist, Focus, Robot), about 6 worse (Save 10%, Family Festival x2, Coffee LinkedIn banner, Dinnerware, Warme Dusche x_post), the rest about the same.
+- **Still weak:** CVs and invoices in banners, the pistaliar leaderboard, and "Save 10%" in a skyscraper (the safety tier now keeps its photo at the cost of a cramped layout).
