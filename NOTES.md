@@ -909,3 +909,53 @@ The scorer and the selection it drives now share the same blind spots. So the me
 All three conditions hold: dev and holdout beat v1 in both modes, and the retrieval-on review shows clearly more better than worse. `retrieval` is merged into main and tagged **v2**, with retrieval on by default. `CHAMELEON_RETRIEVAL=0` gives recipes only.
 
 The organisers still haven't confirmed that shipping a geometry-only library derived from Crello is fine (assumption 3, §8).
+
+## 23. Structure: keep source relationships (branch `structure`, not merged)
+
+### What was built
+- **`eval.score.relations(source)`** finds the source's relationships between non-background elements. It is shared by engine and scorer.
+  - **overlap:** two elements overlap by at least 20% of the smaller. At 5%, incidental touches such as a subhead's box grazing a button also counted, and they hurt agreement on the samples.
+  - **label:** a short text (at most 4 words or 32 characters, or ending in ':'; not the headline, a web address, an email or a bare number), in a different style from what it labels, directly above (within 2 lines) or beside (within 3 lines) it; or a small icon with text right beside it.
+  - **near:** a pair much closer to each other than to anything else: a gap of at most 0.35x (strength 1) or 0.7x (strength 0.5) of either member's gap to its nearest other element.
+  - Backdrops (at least 40% of the canvas) and translucent decorations take part in none.
+  - Two earlier definitions failed. A design-wide "typical gap" merged everything in sparse designs, because the pair's own gap set the typical. Labels without the style rule chained a list of identical lines into one block.
+- **crello-dev counts:** 1,285 overlap, 402 label, 216 near pairs. Label pairs appear in 132 of 200 designs.
+  - Real labels found: "Scene 03" -> its text, "CONTACT ME" -> details, "Where: Contacts:" -> address, list numbers -> items, phone icons -> numbers.
+  - Still missed: labels further than 2 lines from their content; a label to the left of a multi-line block that it only partly overlaps vertically.
+- **Layout tree (`engine.analyze._blocks`):**
+  - Level 1 joins overlap, label and tight neighbours; level 2 joins looser neighbours. No block grows past 60% of the canvas.
+  - A block is a rigid unit that keeps its children. Its role is the most important child's, except that a block that is mostly one photo counts as the hero.
+  - The solver opens a block into its children (in their own reading order) when it lands below its readable scale, or when the column doesn't fit at all, before demoting anything. Headline and big-hero protection check every role inside.
+  - Retrieval maps blocks (library rebuilt: 6,601 units).
+- **Scorer:** `relationships` penalty = strength-weighted share of source pairs broken. A pair is broken when one element moved relative to the other by more than 0.2x the pair's size after scaling, or an overlap pair no longer overlaps. `relations_kept()` reports survival.
+- **Weight 0.5:** agreement barely moves (pooled 0.857 -> 0.858, samples 0.820 -> 0.806). The labels were given before this was a concern and don't reward it more.
+- **Structure suite (`crello-structure`):** 40 dev designs (120 cases) chosen by rule (`build_structure`), each with text on a panel or card, a label pair and a collage.
+
+### Results (retrieval on; v2 outputs rescored with the current scorer)
+
+| | v2 | structure |
+|---|---|---|
+| relationships kept, structure suite | 50.3% | **70.7%** |
+| relationships kept, crello-dev | 40.7% | **75.5%** |
+| relationships kept, crello-holdout | 42.2% | **71.2%** |
+| score, structure suite | 84.56 | 82.60 (39 better, 60 worse) |
+| score, crello-dev | 89.29 | 88.78 (271 better, 241 worse) |
+| score, crello-holdout (once) | 89.26 | 87.80 (126 better, 118 worse) |
+
+- **Other checks:** samples 45/45, 96.41; synthetic 298/300, 0 crashes (299 before).
+- **Runtime:** dev median 6.6 s, max 21.8 s (8 workers).
+- **Where the score goes (dev, points per case):**
+  - Gained: relationships +1.09, floating +0.24.
+  - Lost: `key_size` -0.61 (holdout -1.04) and `text_over_image` -0.53 (holdout -0.67); headline, scale and alignment about -0.15 each.
+  - Why: a rigid block holding the headline scales down to fit, so the headline and the main image (often outside any block) lose share. Blocks of text land on large photos (backdrops, in no block), where nothing keeps them off unless the area is busy.
+- **By eye (30 most changed vs v2, `eval/results/crello-review-structure`):** about 8 better, 9 worse, 13 the same.
+  - Better: Self care, Invoice table, Pharmacy, Covid, Reality Bites.
+  - Worse: Beauty header, Warme Dusche, 25% pharmacy, Best food (photo lost), Office.
+
+### Decision
+Dev and holdout are both below v2, and by eye it isn't clearly better: **not merged**. main stays at v2.
+
+### Likely next steps
+- Keep the headline and the main image out of rigid blocks (they need their own share), or open any block that holds them.
+- Treat large images as places text may not newly land, even when they are calm.
+- Size a block by its most important member, not only by "fits readably".
