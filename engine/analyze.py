@@ -46,12 +46,16 @@ ROLE_BASE = {"headline": 1.0, "hero": 0.9, "cta": 0.85, "logo": 0.75, "subhead":
              "badge": 0.35, "fineprint": 0.2, "decoration": 0.1}
 PRIMARY_ROLES = ("headline", "cta", "logo", "hero")
 FILL_TOLERANCE = 0.01
+NEAR_BLEED = 0.95       # a photo or opaque shape covering this share of the canvas is a background (fills the target)
+TILE_MIN = 0.1          # opaque shapes and photos of at least this share that together cover NEAR_BLEED of the
+                        # canvas are a background layer, each stretched with the canvas (colour panels side by side)
 EDGE_ZONE = 0.12        # a box edge within 12% of a canvas side counts as anchored to it
 CONTAINER_MAX_AREA = {"shape": 0.25, "image": 0.2}  # a bigger image holds text only if flat (CARD_MAX_AREA)
 DECORATION_ALPHA = 0.5  # same threshold as eval.score
 EMPHASIS_BOOST = 0.15
 CARD_MAX_AREA = 0.5     # ...and up to this share of the canvas when it is flat (a card, not a photo)
 FLAT_STD = 25.0         # an image whose opaque pixels vary less than this (RGB std) is flat
+LABEL_MAX_AREA = 0.05  # ...unless it is smaller than this share of the canvas
 CARD_MAX_ASPECT = 4.0   # an image holds text as a card only when at most this elongated
 GRID_SIZE = 1.15        # grid cells' anchors: width and height within this ratio of each other
 THIN_PX = 4.0           # a non-text element this thin (and 10x longer) is a rule line: a decoration
@@ -436,12 +440,34 @@ def _background(els, z, sw, sh):
             b = rotated_bbox(e) if e.get("rotation", 0) else (e["x"], e["y"], e["x"] + e["width"], e["y"] + e["height"])
             if b[0] <= tol_x and b[1] <= tol_y and b[2] >= sw - tol_x and b[3] >= sh - tol_y:
                 fills.add(i)
+    # stretchable only: a contain image must keep its proportions, so it can't follow the canvas
+    stretch = {i: e for i, e in els.items() if i not in fills and not e.get("rotation", 0) and _alpha(e) >= DECORATION_ALPHA
+               and (e["type"] == "shape" and e.get("shape_type", "rectangle") == "rectangle"
+                    or e["type"] == "image" and e.get("fit") == "cover")}
+    for i, e in stretch.items():
+        if _canvas_share([e], sw, sh) >= NEAR_BLEED:
+            fills.add(i)
+    tiles = [e for i, e in stretch.items() if i not in fills and _canvas_share([e], sw, sh) >= TILE_MIN]
+    if len(tiles) > 1 and _canvas_share(tiles, sw, sh) >= NEAR_BLEED:
+        fills.update(e["id"] for e in tiles)
     bg = []
     for i in sorted(els, key=lambda i: z[i]):  # consecutive fills from the bottom of the stack
         if i not in fills:
             break
         bg.append(i)
     return bg
+
+
+def _canvas_share(els, sw, sh, n=40):
+    """Share of the canvas inside the union of the elements' boxes (sampled on an n x n grid)."""
+    pts = [((k + 0.5) * sw / n, (m + 0.5) * sh / n) for k in range(n) for m in range(n)]
+    return sum(any(e["x"] <= x <= e["x"] + e["width"] and e["y"] <= y <= e["y"] + e["height"] for e in els)
+               for x, y in pts) / len(pts)
+
+
+def is_tile(el, sw, sh):
+    """A background that doesn't fill the source canvas (a tile or a near-full-bleed photo)."""
+    return _canvas_share([el], sw, sh) < NEAR_BLEED
 
 
 def _is_decoration(el, containment, sw, sh):
@@ -469,7 +495,8 @@ def _holder(el, sw, sh):
                  or el["type"] == "image" and _area(b) < CARD_MAX_AREA * sw * sh and _flat(el))
             and not _bleeds(b, sw, sh) and not _is_rule_line(el)
             # an image card is compact; a long bar (a table row, a band) is a backdrop the text reflows over
-            and (el["type"] == "shape" or max(el["width"], el["height"]) <= CARD_MAX_ASPECT * min(el["width"], el["height"])))
+            and (el["type"] == "shape" or max(el["width"], el["height"]) <= CARD_MAX_ASPECT * min(el["width"], el["height"])
+                 or _area(b) < LABEL_MAX_AREA * sw * sh))  # a small ribbon or label bar still holds its text
 
 
 def _panels(els, z, rest, sw, sh):

@@ -29,6 +29,7 @@ from engine.analyze import element_box, full_box
 from eval.check import text_layout
 from eval.score import MIN_TEXT_PX_ABS, MIN_TEXT_REL_HEIGHT, _drawn_box
 
+PANEL_SHRINK_MIN = 0.6  # content shrinks at most this much to stay on a panel that can't grow; beyond, it overhangs
 MIN_DIM = 1.5        # px. check() treats < 1px as a hidden element
 # Text metrics differ by ~1-2% between platforms (CoreText on macOS, FreeType on Linux), so the
 # same text can wrap to one more line wherever the official renderer runs. Text boxes get spare
@@ -198,7 +199,7 @@ def realize(a, plan, tw, th, focal=True):
     sizer = plan.sizer
     out = {i: copy.deepcopy(e) for i, e in a.els.items()}
     for b in a.background:
-        place_background(out[b], tw, th)
+        place_background(out[b], tw, th, a.sw, a.sh)
 
     placed = []
     for slot in plan.slots:
@@ -223,7 +224,7 @@ def realize(a, plan, tw, th, focal=True):
             grid.mark(element_box(out[m]))
 
     for pid in sorted(a.panels, key=lambda i: a.els[i]["width"] * a.els[i]["height"]):  # inner panels first
-        place_panel(out, a, pid, tw, th)
+        place_panel(out, sizer, a, pid, tw, th)
     for d in a.decorations:
         place_decoration(out, sizer, a, d, tw, th)
     for u in [*a.units.values(), *a.decorations]:
@@ -233,12 +234,17 @@ def realize(a, plan, tw, th, focal=True):
     return {"canvas": {"width": tw, "height": th}, "elements": [out[e["id"]] for e in a.source["elements"]]}
 
 
-def place_background(el, tw, th):
+def place_background(el, tw, th, sw=None, sh=None):
     """Fill the canvas. Turned a quarter (90/270 degrees), the box's width and height swap on screen,
     and both the box and its rotated bounds must stay on the canvas: that allows at most a centred
-    min(tw, th) square, so a quarter-turned background fills only that on a non-square canvas."""
-    from engine.analyze import quarter_turns
-    if quarter_turns(el) in (1, 3):
+    min(tw, th) square, so a quarter-turned background fills only that on a non-square canvas.
+    A tile of a background layer (engine.analyze.TILE_MIN) stretches with the canvas instead."""
+    from engine.analyze import is_tile, quarter_turns
+    if sw and not el.get("rotation", 0) and is_tile(el, sw, sh):
+        x0, y0 = max(0.0, el["x"]) * tw / sw, max(0.0, el["y"]) * th / sh
+        x1, y1 = min(sw, el["x"] + el["width"]) * tw / sw, min(sh, el["y"] + el["height"]) * th / sh
+        el.update(x=x0, y=y0, width=x1 - x0, height=y1 - y0)
+    elif quarter_turns(el) in (1, 3):
         m = min(tw, th)
         s = m / max(el["width"], el["height"]) if el["type"] == "image" and el.get("fit", "contain") != "cover" else None
         w, h = (el["width"] * s, el["height"] * s) if s else (m, m)
@@ -381,13 +387,14 @@ def _union_boxes(boxes):
     return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
-def place_panel(out, a, pid, tw, th):
+def place_panel(out, sizer, a, pid, tw, th):
     """Fit a panel around wherever what sits on it ended up: that content's box plus an even
     padding (the source's tightest side, scaled like the content), so the empty part of the
     source panel is not kept. A non-cover image keeps its aspect (the box grows around the
     content to it); never larger than the canvas."""
     src, el = a.els[pid], out[pid]
-    on = a.panels[pid]
+    deco = {m for d in a.decorations for m in d.members}  # placed after panels: still at source coordinates
+    on = [i for i in a.panels[pid] if i not in deco] or a.panels[pid]
     sb = _union_boxes([element_box(a.els[i]) for i in on])
     ob = _union_boxes([element_box(out[i]) for i in on])
     s = float(np.mean([out[i]["font_size"] / a.els[i]["font_size"] if a.els[i]["type"] == "text"
@@ -403,6 +410,17 @@ def place_panel(out, a, pid, tw, th):
     else:
         w, h = min(w, tw), min(h, th)
     w, h = max(w, MIN_DIM), max(h, MIN_DIM)
+    f = min(1.0, w / (ob[2] - ob[0] + 2 * pad + 1e-6), h / (ob[3] - ob[1] + 2 * pad + 1e-6))
+    # thin lines on it must stay visible (check() treats < 1px as hidden)
+    f = max(f, *(MIN_DIM / max(min(out[i]["width"], out[i]["height"]), 1e-6) for i in on if out[i]["type"] != "text"), 0.0)
+    if PANEL_SHRINK_MIN <= f < 1:  # the panel can't grow enough (canvas, proportions): its content shrinks to stay on it
+        cx, cy = (ob[0] + ob[2]) / 2, (ob[1] + ob[3]) / 2
+        for i in on:
+            e = out[i]
+            e.update(x=cx + (e["x"] - cx) * f, y=cy + (e["y"] - cy) * f, width=e["width"] * f, height=e["height"] * f)
+            if e["type"] == "text":
+                sizer.set_font(e, max(1, math.floor(e["font_size"] * f)))
+        x0, y0, x1, y1 = cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
     el.update(x=_clamp((x0 + x1 - w) / 2, 0, tw - w), y=_clamp((y0 + y1 - h) / 2, 0, th - h), width=w, height=h)
 
 

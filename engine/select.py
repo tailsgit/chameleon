@@ -1,7 +1,7 @@
 """Choose the winning candidate, and the safety nets behind it.
 
 1. Drop duplicate candidates and any with a hard-rule violation (eval.check), then keep the best tier
-   available of: every text stays on the element it sat on and keeps its contrast; no text newly on a
+   available of: no text both off the element it sat on and short of its contrast; no text newly on a
    busy image; no large element far below its share of the canvas (see _safest).
 2. Rank the rest by the geometric score (eval.score, ~1 ms each), render the top
    RENDER_TOP (fewer once the deadline has passed) and pick the best full score including contrast. Rendering is
@@ -66,8 +66,9 @@ def select(source, target, outputs, preferred=None, deadline=None):
 
 def _safest(source, target, passing):
     """The candidates in the best tier available, judged together (one filter after another could leave
-    only candidates the next one rejects): first, every text stays on the element it sat on and keeps its
-    contrast (eval.score.text_off_backdrop, contrast_drops; contrast estimated without rendering); then no
+    only candidates the next one rejects): first, no text both ends up mostly off the card, label or panel it
+    sat on (eval.score.text_off_backdrop) and loses its contrast (contrast_drops, estimated without
+    rendering); then no
     text newly on a busy image (busy_text_over_image); then no large element far below its share
     (large_share_kept). When no candidate is legible, the one whose worst text kept the most of its contrast
     remains (then by the contrast kept on average, then the score)."""
@@ -75,7 +76,8 @@ def _safest(source, target, passing):
         return passing
     tiers = []
     for o, s in passing:
-        legible = not text_off_backdrop(source, target, o) and not contrast_drops(source, target, o)
+        off = {t for t, _b, _s in text_off_backdrop(source, target, o)}
+        legible = not off or not off & {t for t, _s, _o in contrast_drops(source, target, o)}
         tiers.append(((legible, not busy_text_over_image(source, target, o), large_share_kept(source, target, o) >= SHARE_FLOOR), o, s))
     best = max(t for t, _o, _s in tiers)
     kept = [(o, s) for t, o, s in tiers if t == best]

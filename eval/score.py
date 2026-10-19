@@ -88,6 +88,9 @@ SIBLING_SCALE = 0.1          # siblings in the output scaled within 10% of each 
 SIBLING_RESTACK = 0.25       # kept together but no longer a row: worth it only when the row would be unreadable
 SIBLING_SPREAD = 2.0         # their union box at most this times their summed area (or the source's, if looser)
 GAP_FREE, GAP_FULL = 0.1, 0.3  # an empty band between content: free up to 10% of the side, full penalty at 30%
+COVER_GRID = 48               # points per side sampled for canvas coverage
+COVER_SRC = 0.9              # a source painted over this share of its canvas is (nearly) full-bleed...
+COVER_FULL = 0.15            # ...and this share of the target newly showing bare canvas = full penalty
 BALANCE_FULL = 0.25          # content centre this much further off-centre than in the source = full penalty
 NEAR_MISS_REL = 0.02         # edges closer than 2% of the canvas side, but not aligned, are a near miss
 ALIGNED_PX = 1.0
@@ -930,6 +933,31 @@ def contrast_penalty(c: Ctx):
     return (sum(pens) / len(pens) if pens else 0.0), ", ".join(low)
 
 
+def coverage_penalty(c: Ctx):
+    """Bare canvas (renders white) newly showing through, when the source was (nearly) full-bleed:
+    share of the source canvas covered minus share of the target covered, COVER_FULL = full penalty."""
+    s, o = coverage(json.dumps(c.source, sort_keys=True)), coverage(json.dumps(c.output, sort_keys=True))
+    if s < COVER_SRC:
+        return 0.0, f"source {s:.0%} covered"
+    return min(1.0, max(0.0, s - o) / COVER_FULL), f"covered: source {s:.0%}, output {o:.0%}"
+
+
+@lru_cache(maxsize=256)
+def coverage(design_json):
+    """Share of the canvas painted at least half opaque by shapes and images (texts don't cover)."""
+    design = json.loads(design_json)
+    w, h = design["canvas"]["width"], design["canvas"]["height"]
+    gx, gy = np.meshgrid((np.arange(COVER_GRID) + 0.5) * w / COVER_GRID, (np.arange(COVER_GRID) + 0.5) * h / COVER_GRID)
+    px, py = gx.ravel(), gy.ravel()
+    bare = np.ones(px.size)
+    for e in design["elements"]:  # shortcut: rotation is ignored, as in _text_contrasts
+        if e["type"] != "text":
+            _rgb, a = _layer(e, px, py)
+            if a is not None:
+                bare *= 1 - a
+    return float(np.mean(bare <= 0.5))
+
+
 def legibility_penalty(c: Ctx):
     """contrast_penalty without rendering, so every score sees white text on a white background: the
     same bars and shortfall, with each text's contrast estimated from the layers under its box
@@ -998,6 +1026,7 @@ PENALTIES = {  # name: (function, weight, needs_render). Fitted to all hand labe
     "alignment": (alignment_penalty, 0.68, False),
     "reading_order": (reading_order_penalty, 0.63, False),
     "legibility": (legibility_penalty, 2.0, False),  # 153 labels: pooled 0.866 (off) -> 0.869 (best of 0.5-4); the fit leaves it at the floor (few labelled outputs lose contrast)
+    "coverage": (coverage_penalty, 3.0, False),  # pinned like text_over_image: white space the source never had
     "contrast": (contrast_penalty, 0.5, True),
 }
 
