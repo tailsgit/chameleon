@@ -55,6 +55,8 @@ FOCUS_OFF_CANVAS = 0.35      # ...or, alone in its column, this far from the can
 FOCUS_FREE = 0.05            # off-centre by less than this is centred
 SCALE_FREE, SCALE_FULL = 1.0, 0.4  # headline/hero at this share of the size the target affords: no / full penalty
 BACKDROP_ON = 0.95           # a text this much inside one element (a panel, card, shape or image) sits on it...
+BACKDROP_MAX = 0.4           # ...if that element is compact (under this share of the canvas): a card, label or panel.
+                             # Text on a large photo or illustration may leave it; contrast_drops still guards it
 BACKDROP_KEEP = 0.9          # ...and a candidate where it is less than this much on it is rejected
 CONTRAST_GRID = (32, 8)      # points sampled under a text's box (across, down)
 CONTRAST_LOW = 25            # a text's contrast: this percentile of the WCAG ratios at those points
@@ -350,6 +352,7 @@ def _backdrops(source_json):
         tb = _drawn_box(t)
         under = [e for e in source["elements"] if e["type"] != "text" and order[e["id"]] < order[t["id"]]
                  and not _is_background(e, sw, sh) and _inter(tb, _drawn_box(e)) >= BACKDROP_ON * max(_area(tb), 1e-9)]
+        under = [e for e in under if _area(_drawn_box(e)) < BACKDROP_MAX * sw * sh]
         if under:
             pairs.append((t["id"], min(under, key=lambda e: _area(_drawn_box(e)))["id"]))
     return tuple(pairs)
