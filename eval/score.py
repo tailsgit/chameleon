@@ -755,8 +755,8 @@ PENALTIES = {  # name: (function, weight, needs_render). Fitted to all hand labe
     "headline": (headline_penalty, 0.83, False),
     "scale": (scale_penalty, 0.68, False),
     "key_size": (key_size_penalty, 2.0, False),
-    "text_over_image": (text_over_image_penalty, 3.0, False),
-    "relationships": (relationships_penalty, 0.5, False),  # labels barely move with it: pooled 0.857 -> 0.858, samples -0.014  # pinned like key_size: free fit 0.63
+    "text_over_image": (text_over_image_penalty, 3.0, False),  # pinned like key_size: free fit 0.63
+    "relationships": (relationships_penalty, 0.5, False),  # labels barely move with it: pooled 0.857 -> 0.858, samples -0.014
     "space": (space_penalty, 1.15, False),
     "balance": (balance_penalty, 1.38, False),
     "floating": (floating_penalty, 0.5, False),
