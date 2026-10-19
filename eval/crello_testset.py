@@ -19,6 +19,7 @@ from eval.crello_convert import OUT, REPO
 N_DESIGNS, SIZES_PER_DESIGN, SEED = 300, 3, 2026
 TESTSET = REPO / "eval" / "crello_testset.json"
 CATALOGUE = REPO / "eval" / "canvas_catalogue.json"
+STRUCTURE = REPO / "eval" / "crello_structure.json"
 ELEMENT_BANDS = (3, 7, 13, 21, 41)       # [3,7) [7,13) [13,21) [21,41)
 ASPECT_BANDS = (0.7, 0.95, 1.05, 1.6)    # tall | portrait | square | landscape | wide
 
@@ -61,9 +62,62 @@ def build():
 
 
 def cases(split):
-    """[(case name, design id, target {name, width, height})] for one split."""
+    """[(case name, design id, target {name, width, height})] for one split: dev, holdout, or
+    structure (the dev designs in STRUCTURE, with their dev targets)."""
     designs = json.loads(TESTSET.read_text())["designs"]
+    if split == "structure":
+        keep = set(json.loads(STRUCTURE.read_text())["designs"])
+        designs = [d for d in designs if d["id"] in keep]
+        split = "dev"
     return [(f"crello_{d['id']}__{_slug(t['name'])}", d["id"], t) for d in designs if d["split"] == split for t in d["targets"]]
+
+
+def build_structure(n=40):
+    """Pick about n crello-dev designs with the structure the engine must keep (eval.score.relations):
+      panel    text sitting >= 90% inside a shape or image it overlaps (text on a panel or card)
+      label    a label pair (a heading or "Label:" and what it labels)
+      collage  >= 3 images joined by overlaps
+    Designs with more of these patterns first, then balanced across patterns; ids and patterns only."""
+    import os
+    from collections import Counter
+    from eval.crello_convert import OUT
+    os.environ.setdefault("CHAMELEON_ASSETS", str(OUT / "assets"))
+    from eval.score import _drawn_box, _inter, _area, relations
+    found = {}
+    for did in sorted({d for _c, d, _t in cases("dev")}):
+        src = json.loads((OUT / "designs" / f"{did}.json").read_text())["source"]
+        els = {e["id"]: e for e in src["elements"]}
+        rels = relations(src)
+        pats = set()
+        for r in rels:
+            a, b = els[r["a"]], els[r["b"]]
+            if r["kind"] == "label" and a["type"] == "text":
+                pats.add("label")
+            if r["kind"] == "overlap":
+                t, h = (a, b) if a["type"] == "text" else (b, a)
+                if t["type"] == "text" and h["type"] != "text" and _inter(_drawn_box(t), _drawn_box(h)) >= 0.9 * _area(_drawn_box(t)):
+                    pats.add("panel")
+        imgs = {r[k] for r in rels if r["kind"] == "overlap" and els[r["a"]]["type"] == els[r["b"]]["type"] == "image" for k in ("a", "b")}
+        parent = {i: i for i in imgs}
+        def find(i):
+            while parent[i] != i:
+                i = parent[i]
+            return i
+        for r in rels:
+            if r["kind"] == "overlap" and r["a"] in imgs and r["b"] in imgs:
+                parent[find(r["a"])] = find(r["b"])
+        if imgs and max(Counter(find(i) for i in imgs).values()) >= 3:
+            pats.add("collage")
+        if pats:
+            found[did] = sorted(pats)
+    chosen, count = [], Counter()
+    for did, pats in sorted(found.items(), key=lambda kv: -len(kv[1])):
+        if len(chosen) < n and (len(pats) > 1 or min(count[p] for p in pats) < n // 3):
+            chosen.append(did)
+            count.update(pats)
+    STRUCTURE.write_text(json.dumps({"_note": "crello-dev designs with structure to keep; see build_structure",
+                                     "designs": chosen, "patterns": {d: found[d] for d in chosen}}, indent=1))
+    print(f"{len(chosen)} designs ({len(chosen) * 3} cases); patterns {dict(count)}; candidates {len(found)} of 200")
 
 
 def _slug(s):

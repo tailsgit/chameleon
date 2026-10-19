@@ -19,6 +19,7 @@ Roles are decided from the SOURCE and carried to the output by id:
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import combinations
@@ -53,6 +54,16 @@ ROW_GAP = 0.1                # side-by-side units closer than this (x canvas wid
 FOCUS_OFF_CANVAS = 0.35      # ...or, alone in its column, this far from the canvas centre (x canvas width)
 FOCUS_FREE = 0.05            # off-centre by less than this is centred
 SCALE_FREE, SCALE_FULL = 1.0, 0.4  # headline/hero at this share of the size the target affords: no / full penalty
+LARGE_SHARE = 0.1            # an element covering this share of the source canvas is large...
+SHARE_FLOOR = 0.5            # ...and no candidate may leave it less than this share of the share it can keep
+DRIFT_FULL = math.log(4)     # an element at 4x (or 1/4) the share it can keep: full share drift
+REL_BIG = 0.4                # elements covering this share of the canvas are backdrops: no relationships
+REL_OVERLAP = 0.2            # overlapping by this share of the smaller one's area is an overlap pair (designed
+                             # stacking; a few percent is incidental, e.g. a subhead's box touching a button)
+REL_TIGHT, REL_LOOSE = 0.35, 0.7  # close neighbours: their gap under this many times their gap to anything else
+REL_BLOCK_MAX = 0.5          # a proximity cluster may not grow past this share of the canvas
+REL_KEPT = 0.2               # a pair is kept when its relative offset moved by at most this (x pair size)
+LABEL_WORDS, LABEL_CHARS = 4, 32  # a label: at most this many words or characters, or ending in ':'
 OVER_FREE, OVER_FULL = 0.05, 0.5  # share of a text newly on top of an image: no / full penalty
 BUSY_COVER = 0.2             # a text newly this much on top of an image...
 BUSY = 0.02                  # ...whose pixels under it vary this much (mean |gradient|, 0-1 grey) is rejected outright
@@ -302,6 +313,207 @@ def _busyness(el, region):
 
 def _inter(a, b):
     return _area((max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])))
+
+
+def share_drift_penalty(c: Ctx):
+    """Each element's share of the canvas should not fall below its share of the source: per element,
+    ln(the share it can keep / output share) / DRIFT_FULL, 0 when it grew, capped at 1, where the
+    share it can keep is its source share, or less for an image whose aspect can't fill that much
+    of the target (text re-wraps, so it can). Penalty = mean weighted by source share: large
+    elements count most, small ones barely. Growth is free: penalising it as well agreed less with
+    the hand labels (pooled 0.849 vs 0.867), which favour an enlarged headline or product."""
+    rows = _shares(c)
+    if not rows:
+        return 0.0, ""
+    total = sum(src for _i, src, _out, _keep in rows)
+    drift = [(i, src, min(1.0, max(0.0, math.log(keep / max(out, 1e-9))) / DRIFT_FULL)) for i, src, out, keep in rows]
+    worst = max(drift, key=lambda t: t[1] * t[2])
+    return sum(src * d for _i, src, d in drift) / total, f"{worst[0]} drifted {worst[2]:.2f}" if worst[2] > 0.05 else ""
+
+
+def _shares(c):
+    """[(id, source share, output share, share it can keep)] for foreground elements."""
+    rows = []
+    for i, e in c.src.items():
+        if i not in c.out_box or _is_background(e, c.sw, c.sh) or _is_decoration(e):
+            continue
+        sb, ob = c.src_box[i], c.out_box[i]
+        src = _area(sb) / (c.sw * c.sh)
+        if src <= 0:
+            continue
+        keep = src
+        if e["type"] != "text":
+            r = (sb[2] - sb[0]) / max(sb[3] - sb[1], 1e-9)
+            keep = min(src, c.tw / (r * c.th) if r >= c.tw / c.th else r * c.th / c.tw)
+        rows.append((i, src, _area(ob) / (c.tw * c.th), max(keep, 1e-9)))
+    return rows
+
+
+def large_share_kept(source, target_canvas, output):
+    """Lowest (output share / share it can keep) over large elements (>= LARGE_SHARE of the source), or
+    1.0 when there are none. The engine drops candidates under SHARE_FLOOR."""
+    c = _context(source, target_canvas, output)
+    return min((out / keep for _i, src, out, keep in _shares(c) if src >= LARGE_SHARE), default=1.0)
+
+
+def largest_share_ratio(source, target_canvas, output):
+    """Output share / source share of the largest foreground element, for reports."""
+    c = _context(source, target_canvas, output)
+    rows = _shares(c)
+    return max(rows, key=lambda t: t[1])[2] / max(rows, key=lambda t: t[1])[1] if rows else 1.0
+
+
+def relationships_penalty(c: Ctx):
+    """Relationships the source design has between elements (see relations()) should survive:
+    a pair survives when one element sits where it sat relative to the other, scaled with them
+    (offset error <= REL_KEPT of the pair's size) and, for an overlap pair, they still overlap.
+    Penalty = strength-weighted share of pairs broken."""
+    rels = relations(c.source)
+    if not rels:
+        return 0.0, ""
+    broken = [r for r in rels if not _kept(c, r)]
+    total = sum(r["strength"] for r in rels)
+    return sum(r["strength"] for r in broken) / total, ", ".join(f"{r['kind']} {r['a']}~{r['b']}" for r in broken[:5])
+
+
+def relations_kept(source, target_canvas, output):
+    """(strength-weighted share of the source's relationships kept, number of pairs) for reports."""
+    rels = relations(source)
+    if not rels:
+        return 1.0, 0
+    c = _context(source, target_canvas, output)
+    return sum(r["strength"] for r in rels if _kept(c, r)) / sum(r["strength"] for r in rels), len(rels)
+
+
+def _kept(c, r):
+    a, b = r["a"], r["b"]
+    if a not in c.out_box or b not in c.out_box:
+        return False
+    sa, sb, oa, ob = c.src_box[a], c.src_box[b], c.out_box[a], c.out_box[b]
+    if r["kind"] == "overlap" and _inter(oa, ob) <= 0:
+        return False
+    s = math.sqrt(max(_area(oa) + _area(ob), 1e-9) / max(_area(sa) + _area(sb), 1e-9))
+    centre = lambda b: ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+    (sax, say), (sbx, sby), (oax, oay), (obx, oby) = centre(sa), centre(sb), centre(oa), centre(ob)
+    err = math.hypot((obx - oax) - s * (sbx - sax), (oby - oay) - s * (sby - say))
+    u = _union_box([sa, sb])
+    return err <= REL_KEPT * s * math.hypot(u[2] - u[0], u[3] - u[1])
+
+
+@lru_cache(maxsize=64)
+def _relations_cached(source_json):
+    source = json.loads(source_json)
+    sw, sh = source["canvas"]["width"], source["canvas"]["height"]
+    els = [e for e in source["elements"] if not _is_background(e, sw, sh) and not _is_decoration(e)]
+    box = {e["id"]: _drawn_box(e) for e in els}
+    els = [e for e in els if 0 < _area(box[e["id"]]) < REL_BIG * sw * sh]
+    rels, seen = [], set()
+
+    def add(a, b, kind, strength):
+        key = tuple(sorted((a, b)))
+        if key not in seen:
+            seen.add(key)
+            rels.append({"a": a, "b": b, "kind": kind, "strength": strength})
+
+    for x, y in combinations(els, 2):  # overlap pairs: intentional stacking (a collage, text on a card)
+        if _inter(box[x["id"]], box[y["id"]]) >= REL_OVERLAP * min(_area(box[x["id"]]), _area(box[y["id"]])):
+            add(x["id"], y["id"], "overlap", 1.0)
+    head = key_elements(source)[0]
+    for lab in els:  # label pairs: a short heading or "Label:" right above or beside what it labels
+        if lab["type"] != "text" or lab["id"] == head or not _is_label(lab["content"]):
+            continue
+        lb, lh = box[lab["id"]], lab["font_size"] * lab.get("line_height", 1.2)
+        best = None
+        for e in els:
+            if e is lab or e["type"] == "text" and _style(e) == _style(lab) and not lab["content"].strip().endswith(":"):
+                continue  # a label looks different from what it labels (a list of alike lines is not label + content)
+            b = box[e["id"]]
+            below = b[1] - lb[3]
+            right = b[0] - lb[2]
+            if -0.5 * lh <= below <= 2 * lh and min(lb[2], b[2]) - max(lb[0], b[0]) > 0.5 * min(lb[2] - lb[0], b[2] - b[0]):
+                d = below
+            elif -0.5 * lh <= right <= 3 * lh and min(lb[3], b[3]) - max(lb[1], b[1]) > 0.5 * min(lb[3] - lb[1], b[3] - b[1]):
+                d = right
+            else:
+                continue
+            if best is None or d < best[0]:
+                best = (d, e["id"])
+        if best:
+            add(lab["id"], best[1], "label", 1.0)
+    for icon in els:  # an icon labelling the text right of it (a phone icon and its number)
+        ib = box[icon["id"]]
+        if icon["type"] == "text" or _area(ib) > 0.01 * sw * sh:
+            continue
+        near = [(e["id"], box[e["id"]][0] - ib[2]) for e in els if e["type"] == "text"
+                and min(ib[3], box[e["id"]][3]) - max(ib[1], box[e["id"]][1]) > 0.5 * min(ib[3] - ib[1], box[e["id"]][3] - box[e["id"]][1])
+                and 0 <= box[e["id"]][0] - ib[2] <= 1.5 * (ib[3] - ib[1])]
+        if near:
+            add(icon["id"], min(near, key=lambda t: t[1])[0], "label", 1.0)
+    # close neighbours: a pair much closer to each other than either is to anything else (its surroundings)
+    ids = [e["id"] for e in els]
+    gaps = {(x, y): _gap(box[x], box[y]) for x, y in combinations(ids, 2)}
+    gap = lambda x, y: gaps.get((x, y), gaps.get((y, x)))
+    parent = {i: i for i in ids}
+    span = dict(box)
+
+    def find(i):
+        while parent[i] != i:
+            i = parent[i]
+        return i
+    for (x, y), g in sorted(gaps.items(), key=lambda kv: kv[1]):
+        around = min([gap(x, o) for o in ids if o not in (x, y)] + [gap(y, o) for o in ids if o not in (x, y)], default=math.inf)
+        if g > REL_LOOSE * around:
+            continue
+        rx, ry = find(x), find(y)
+        if rx == ry:
+            continue
+        u = _union_box([span[rx], span[ry]])
+        if _area(u) > REL_BLOCK_MAX * sw * sh:
+            continue
+        parent[rx], span[ry] = ry, u
+        add(x, y, "near", 1.0 if g <= REL_TIGHT * around else 0.5)
+    return tuple(json.dumps(r, sort_keys=True) for r in rels)
+
+
+def relations(source):
+    """The source's relationships between non-background elements, as [{a, b, kind, strength}]:
+      overlap  the two overlap (REL_OVERLAP of the smaller): stacking the designer chose (strength 1)
+      label    a short text (<= LABEL_WORDS words or LABEL_CHARS characters, or ending in ':'; not the
+               headline, a web address, an email or a bare number), directly above (within 2 lines) or
+               beside (within 3 lines) the nearest text (in a different style, unless the label ends
+               in ':'), icon or image it labels; or a small icon
+               (< 1% of the canvas) with text right beside it (strength 1)
+      near     neighbours much closer to each other than to their surroundings: their gap is within
+               REL_LOOSE of the smallest gap from either of them to any other element (within REL_TIGHT:
+               strength 1, else 0.5); joined by single linkage, never past REL_BLOCK_MAX of the canvas.
+    Backdrops (>= REL_BIG of the canvas) and translucent decorations take part in none.
+    Shared with engine.analyze, which turns them into blocks that move as one."""
+    rels = _relations_cached(json.dumps(source, sort_keys=True))
+    return [json.loads(r) for r in rels]
+
+
+def _style(el):
+    return (el["font_family"], el.get("font_weight"), round(el["font_size"]), el.get("color"))
+
+
+def _is_label(text):
+    """Short words that head something; not a web address, an email or a bare number/price."""
+    t = text.strip()
+    if "@" in t or "www" in t.lower() or re.search(r"\w\.(com|net|org|[a-z]{2})\b", t.lower()):
+        return False
+    if not re.search(r"[A-Za-z]{2}", t) and not re.fullmatch(r"\d{1,2}[.)]?", t):  # keep list markers like "1." / "02"
+        return False
+    return t.endswith(":") or len(t.split()) <= LABEL_WORDS and len(t) <= LABEL_CHARS
+
+
+def _gap(a, b):
+    dx = max(0.0, max(a[0], b[0]) - min(a[2], b[2]))
+    dy = max(0.0, max(a[1], b[1]) - min(a[3], b[3]))
+    return math.hypot(dx, dy)
+
+
+def _union_box(boxes):
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
 def key_size_penalty(c: Ctx):
@@ -595,6 +807,8 @@ PENALTIES = {  # name: (function, weight, needs_render). Fitted to all hand labe
     "scale": (scale_penalty, 0.68, False),
     "key_size": (key_size_penalty, 2.0, False),
     "text_over_image": (text_over_image_penalty, 3.0, False),  # pinned like key_size: free fit 0.63
+    "relationships": (relationships_penalty, 0.5, False),
+    "share_drift": (share_drift_penalty, 1.0, False),  # all 135 labels: pooled 0.864 -> 0.867, crello-dev 0.876 -> 0.938  # labels barely move with it: pooled 0.857 -> 0.858, samples -0.014
     "space": (space_penalty, 1.15, False),
     "balance": (balance_penalty, 1.38, False),
     "floating": (floating_penalty, 0.5, False),

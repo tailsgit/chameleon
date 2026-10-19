@@ -41,7 +41,7 @@ from eval.score import PENALTIES, score
 REPO = Path(__file__).resolve().parents[1]
 CATALOGUE = REPO / "eval" / "canvas_catalogue.json"
 SAMPLES = sorted((REPO / "input").glob("chameleon_sample_*.json"))
-SUITES = ("samples", "crello-dev", "crello-holdout")
+SUITES = ("samples", "crello-dev", "crello-holdout", "crello-structure")
 CELL, THUMB = 230, 200
 WORST_LISTED = 30
 

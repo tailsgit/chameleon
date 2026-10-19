@@ -134,7 +134,8 @@ def test_sibling_row_is_one_unit_and_stays_together():
     assert "badge1+badge2+badge3" in analyze(t["source"]).units
     for tw, th in ((300, 250), (820, 312), (1920, 1080)):
         out = resize(t["source"], {"width": tw, "height": th})
-        assert score(t["source"], out["canvas"], out)["breakdown"]["siblings"]["penalty"] == 0, (tw, th)
+        sib = score(t["source"], out["canvas"], out)["breakdown"]["siblings"]
+        assert sib["penalty"] <= 0.25 and "split" not in sib["detail"], (tw, th)  # together: a row, or a stack if it must
 
 
 def test_sibling_row_restacks_rather_than_go_unreadable():
