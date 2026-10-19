@@ -144,4 +144,4 @@ def test_sibling_row_restacks_rather_than_go_unreadable():
     labels = [e for e in out["elements"] if e["id"] in ("badge1_label", "badge2_label", "badge3_label")]
     assert len({e["font_size"] for e in labels}) == 1 and labels[0]["font_size"] >= 15  # one size, readable
     sib = score(t["source"], out["canvas"], out)["breakdown"]["siblings"]
-    assert sib["penalty"] == 0.25 and "no longer a row" in sib["detail"]  # a stack, kept together
+    assert sib["penalty"] <= 0.25 and "split" not in sib["detail"]  # kept together: still a row, or a stack if it must

@@ -38,7 +38,7 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                 log.info("time budget reached after %d candidates", len(outputs))
                 break
             # stand-out floating units: centred in their free space, or near their source side; the scorer picks
-            focal = (True, False) if any(a.units[u].emphasis for u in plan.floating) else (True,)
+            focal = (True, False) if any(a.unit(u).emphasis for u in plan.floating) else (True,)
             for f in focal:
                 try:
                     outputs.append(realize(a, plan, target["width"], target["height"], focal=f))

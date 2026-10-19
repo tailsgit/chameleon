@@ -108,16 +108,18 @@ def test_big_hero_keeps_its_share_on_a_wide_canvas():
     assert p["height"] >= 0.9 * 396  # it keeps the full height of the banner instead of shrinking with the text
 
 
-def test_a_big_flat_card_holds_its_text_but_a_photo_does_not(tmp_path, monkeypatch):
+def test_a_big_flat_card_holds_its_text_and_a_photo_keeps_it_as_a_block(tmp_path, monkeypatch):
     import numpy as np
     from PIL import Image
     Image.new("RGBA", (64, 64), (240, 230, 200, 255)).save(tmp_path / "card.png")
     Image.fromarray(np.random.default_rng(0).integers(0, 255, (64, 64, 3), dtype=np.uint8)).save(tmp_path / "photo.png")
     monkeypatch.setenv("CHAMELEON_ASSETS", str(tmp_path))
-    def on(asset):  # a 600x600 image (31% of the canvas) with a title on it
+    def on(asset):  # a 600x600 image (31% of the canvas) with a title on it: (kept together, as a block)
         src = design(1080, 1080, [{**image("img", 240, 240, 600, 600), "asset_id": asset}, text("t", 300, 400, 480, 100, "On it", fs=60)])
-        return any({"img", "t"} <= set(u.members) for u in analyze(src).units.values())
-    assert on("card.png") and not on("photo.png")
+        u = next((u for u in analyze(src).units.values() if {"img", "t"} <= set(u.members)), None)
+        return u is not None, bool(u and u.children)
+    assert on("card.png") == (True, False)  # a card: one unit holding its text
+    assert on("photo.png") == (True, True)  # a photo with text on it: an overlap block, opened only if unreadable
 
 
 def test_a_tall_stack_of_texts_flows_into_columns_on_a_wide_banner():
@@ -144,3 +146,54 @@ def test_an_oversized_panel_fits_around_its_text():
     p, h = out["panel"], out["h"]
     assert p["x"] <= h["x"] and p["y"] <= h["y"]  # still behind its text...
     assert p["width"] * p["height"] < 0.5 * 1920 * 1080  # ...but no longer a mostly empty square
+
+
+def _kept(src, target, out):
+    from eval.score import relations_kept
+    return relations_kept(src, target, out)[0]
+
+
+def test_a_collage_moves_as_one_block():
+    els = [image("p1", 100, 100, 400, 300), image("p2", 380, 250, 400, 300), image("p3", 200, 450, 400, 300),
+           text("t", 100, 900, 880, 100, "Our summer in pictures", fs=60)]
+    src = design(1080, 1080, els)
+    block = next(u for u in analyze(src).units.values() if {"p1", "p2", "p3"} <= set(u.members))
+    assert block.children and "t" not in block.members  # the three photos, not the caption far below
+    for target in ({"width": 1920, "height": 1080}, {"width": 1080, "height": 1920}):
+        out = resize(src, target)
+        assert check(src, target, out) == []
+        o = {e["id"]: e for e in out["elements"]}
+        s = o["p1"]["width"] / 400  # one scale, same arrangement and stacking
+        for i, (x, y) in (("p2", (280, 150)), ("p3", (100, 350))):
+            assert abs(o[i]["x"] - o["p1"]["x"] - x * s) < 1 and abs(o[i]["y"] - o["p1"]["y"] - y * s) < 1
+        assert [e["id"] for e in out["elements"]][:3] == ["p1", "p2", "p3"]
+
+
+def test_contact_heading_stays_with_its_details():
+    src = design(1080, 1350, [
+        image("photo", 0, 0, 1080, 700),
+        text("h", 80, 760, 920, 120, "Summer sale", fs=90),
+        text("lab", 80, 1060, 400, 50, "Contact us", fs=36, font_weight="bold"),
+        text("info", 80, 1120, 600, 120, "hello@example.com\n+1 555 0100", fs=28),
+    ])
+    assert any(r["kind"] == "label" and {r["a"], r["b"]} == {"lab", "info"} for r in __import__("eval.score", fromlist=["relations"]).relations(src))
+    for target in ({"width": 1584, "height": 396}, {"width": 1080, "height": 1920}):
+        out = resize(src, target)
+        assert check(src, target, out) == []
+        o = {e["id"]: e for e in out["elements"]}
+        gap = o["info"]["y"] - (o["lab"]["y"] + o["lab"]["height"] * 0.5)
+        assert 0 <= gap <= 3 * o["lab"]["font_size"] and abs(o["info"]["x"] - o["lab"]["x"]) < 2  # still right under it
+
+
+def test_a_block_opens_only_when_it_would_be_unreadable():
+    # two paragraphs side by side, close together: one block; on a tall narrow canvas it can only stay readable apart
+    body = "A longer paragraph of body text that explains the offer in a few short sentences for the reader."
+    src = design(1600, 900, [text("h", 100, 80, 1400, 150, "Two columns of news", fs=100),
+                             text("l", 100, 400, 680, 300, body, fs=30), text("r", 820, 400, 680, 300, body, fs=30)])
+    assert any({"l", "r"} <= set(u.members) and u.children for u in analyze(src).units.values())
+    wide = resize(src, {"width": 1920, "height": 1080})
+    o = {e["id"]: e for e in wide["elements"]}
+    assert abs(o["l"]["y"] - o["r"]["y"]) < 1  # fits readably: kept side by side
+    tall = resize(src, {"width": 160, "height": 600})
+    o = {e["id"]: e for e in tall["elements"]}
+    assert check(src, {"width": 160, "height": 600}, tall) == [] and min(o["l"]["font_size"], o["r"]["font_size"]) >= 12

@@ -1,0 +1,247 @@
+{
+ "_note": "crello-dev designs with structure to keep; see build_structure",
+ "designs": [
+  "5889bb0195a7a863ddcc394f",
+  "589d7bb295a7a863ddcc5532",
+  "589df8d495a7a863ddcc5e39",
+  "58a1e87e95a7a863ddcc655e",
+  "58a3089795a7a863ddcc66de",
+  "58aed3c795a7a863ddcc88e4",
+  "590af47b95a7a863ddcd6876",
+  "59158a1995a7a863ddcd8503",
+  "593118b995a7a863ddcdc93c",
+  "593145dc95a7a863ddcdced9",
+  "59535df595a7a863ddce1115",
+  "5954beee95a7a863ddce15ec",
+  "59b26ae81350e8329300d444",
+  "5ab9076df07aee69770e9039",
+  "5ac4a8ce4b568b8eece2fd9b",
+  "5b3f83c11eb1c99e2afe10bf",
+  "5b756cf71cc8aa5429ba8033",
+  "5b76e9ec1cc8aa5429ad3902",
+  "5b9a631218654940f77df994",
+  "5bc09b7278e1194aa6496e3e",
+  "5c179226133a7853927e0f04",
+  "5c88fb6d85ea3c16f98df0db",
+  "5cf14d798cba87f9434fefb8",
+  "5d08e5d48cba87f943d052da",
+  "5d08ef5d8cba87f943e4586b",
+  "5d371dae8cba87f943a63b67",
+  "5d691f00abc8ea6d1c396bbf",
+  "5d9cad46abc8ea6d1c234bd4",
+  "5d9f1ce1abc8ea6d1c98c087",
+  "5db1a542abc8ea6d1cd835af",
+  "5dee48ac9fea0cc3743716a5",
+  "5df213199fea0cc374af016c",
+  "5e4facf31cc98b350aeffeeb",
+  "5e563cae1cc98b350a78b20a",
+  "5e908795499b85dcc707c609",
+  "5eb53150499b85dcc702ff38",
+  "5eb9695d499b85dcc73667f2",
+  "5ef32868499b85dcc76e66fc",
+  "5f0418f6499b85dcc7a767f9",
+  "5f05bdae499b85dcc767e8b7"
+ ],
+ "patterns": {
+  "5889bb0195a7a863ddcc394f": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "589d7bb295a7a863ddcc5532": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "589df8d495a7a863ddcc5e39": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "58a1e87e95a7a863ddcc655e": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "58a3089795a7a863ddcc66de": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "58aed3c795a7a863ddcc88e4": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "590af47b95a7a863ddcd6876": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "59158a1995a7a863ddcd8503": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "593118b995a7a863ddcdc93c": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "593145dc95a7a863ddcdced9": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "59535df595a7a863ddce1115": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5954beee95a7a863ddce15ec": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "59b26ae81350e8329300d444": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5ab9076df07aee69770e9039": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5ac4a8ce4b568b8eece2fd9b": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5b3f83c11eb1c99e2afe10bf": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5b756cf71cc8aa5429ba8033": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5b76e9ec1cc8aa5429ad3902": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5b9a631218654940f77df994": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5bc09b7278e1194aa6496e3e": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5c179226133a7853927e0f04": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5c88fb6d85ea3c16f98df0db": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5cf14d798cba87f9434fefb8": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5d08e5d48cba87f943d052da": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5d08ef5d8cba87f943e4586b": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5d371dae8cba87f943a63b67": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5d691f00abc8ea6d1c396bbf": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5d9cad46abc8ea6d1c234bd4": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5d9f1ce1abc8ea6d1c98c087": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5db1a542abc8ea6d1cd835af": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5dee48ac9fea0cc3743716a5": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5df213199fea0cc374af016c": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5e4facf31cc98b350aeffeeb": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5e563cae1cc98b350a78b20a": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5e908795499b85dcc707c609": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5eb53150499b85dcc702ff38": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5eb9695d499b85dcc73667f2": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5ef32868499b85dcc76e66fc": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5f0418f6499b85dcc7a767f9": [
+   "collage",
+   "label",
+   "panel"
+  ],
+  "5f05bdae499b85dcc767e8b7": [
+   "collage",
+   "label",
+   "panel"
+  ]
+ }
+}

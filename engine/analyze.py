@@ -34,7 +34,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from eval.check import rotated_bbox, text_layout
-from eval.score import ATTACH_MIN, emphasis, siblings
+from eval.score import ATTACH_MIN, emphasis, relations, siblings
 from renderer.converter.colorutil import parse_rgba
 
 ACTION_WORDS = {
@@ -46,6 +46,8 @@ ROLE_BASE = {"headline": 1.0, "hero": 0.9, "cta": 0.85, "logo": 0.75, "subhead":
              "badge": 0.35, "fineprint": 0.2, "decoration": 0.1}
 PRIMARY_ROLES = ("headline", "cta", "logo", "hero")
 FILL_TOLERANCE = 0.01
+BLOCK_MAX = 0.6         # a block (units kept together, see _blocks) never grows past this share of the canvas
+BLOCK_HERO = 0.5        # a block that is mostly (by area) its hero photo counts as the hero
 EDGE_ZONE = 0.12        # a box edge within 12% of a canvas side counts as anchored to it
 CONTAINER_MAX_AREA = {"shape": 0.25, "image": 0.2}  # a bigger image holds text only if flat (CARD_MAX_AREA)
 DECORATION_ALPHA = 0.5  # same threshold as eval.score
@@ -76,6 +78,12 @@ class Unit:
     side: tuple = (1, 1)     # side of its anchor it sits on (x, y), each +-1
     parts: list = field(default_factory=list)  # a sibling row or grid: (members, source box) of each part, reading order
     cols: int = 0            # a grid: its source column count (a sibling row: 0, i.e. all parts in one row)
+    children: list = field(default_factory=list)  # a block: the units it keeps together (see _blocks)
+
+    @property
+    def roles(self):
+        """Its own role and, for a block, every role inside it."""
+        return {self.role, *(r for c in self.children for r in c.roles)}
 
     @property
     def w(self):
@@ -105,6 +113,11 @@ class Analysis:
     relations: dict = field(default_factory=dict)
     text_align: str = "center"
     panels: dict = field(default_factory=dict)  # panel id -> ids of what sits on it (see _panels)
+    inner: dict = field(default_factory=dict)   # uid -> unit inside a block (any depth), for when it is opened
+
+    def unit(self, uid):
+        """A top-level unit, or one inside a block (placed on its own once the block is opened)."""
+        return self.units[uid] if uid in self.units else self.inner[uid]
 
     def by_role(self, role):
         return next((u for u in self.units.values() if u.role == role), None)
@@ -223,6 +236,7 @@ def analyze(source):
     _merge_grids(units, els, z, sw, sh)
     _merge_siblings(units, source, z, sw, sh)
     _attach(units)
+    inner = _blocks(units, source, z, sw, sh)
     for u in [*units.values(), *decorations]:
         h = units[u.host].drawn if u.host else (0, 0, sw, sh)
         u.side = side_of(u.drawn, h)
@@ -235,7 +249,7 @@ def analyze(source):
 
     return Analysis(
         source=source, sw=sw, sh=sh, els=els, background=background, decorations=decorations, units=units,
-        rows=rows, text_align=aligns.most_common(1)[0][0] if aligns else "center", panels=panels,
+        rows=rows, text_align=aligns.most_common(1)[0][0] if aligns else "center", panels=panels, inner=inner,
         relations={
             "containment": containment,
             "alignment": _alignments(units),
@@ -249,6 +263,68 @@ def analyze(source):
 def _edges(b, sw, sh):
     return tuple(e for e, near in (("left", b[0] <= EDGE_ZONE * sw), ("right", b[2] >= (1 - EDGE_ZONE) * sw),
                                    ("top", b[1] <= EDGE_ZONE * sh), ("bottom", b[3] >= (1 - EDGE_ZONE) * sh)) if near)
+
+
+def _blocks(units, source, z, sw, sh):
+    """Keep the source's relationships (eval.score.relations): units joined by an overlap (a collage,
+    text on a card), a label pair ("Contact us" and the details under it) or a tight gap become one
+    block; blocks joined by a looser gap become a block of blocks. A block is a rigid unit, scaled
+    as one with its insides as designed; the column solver (engine.recipes) opens it into its
+    children only when it cannot fit at a readable size. Floating units stay out; a block never
+    grows past BLOCK_MAX of the canvas. Units that end up inside a block move to the returned
+    dict (uid -> unit), and floating units attached to one are re-attached to its block."""
+    owner = {m: uid for uid, u in units.items() if not u.floating for m in u.members}
+    rels = relations(source)
+    inner = {}
+    # level 1: overlaps, labels and tight neighbours (strength 1); level 2: looser neighbours (0.5)
+    for strength in (1.0, 0.5):
+        parent = {uid: uid for uid in units if not units[uid].floating}
+
+        def find(i):
+            while parent[i] != i:
+                i = parent[i]
+            return i
+        span = {uid: units[uid].box for uid in parent}
+        for r in rels:
+            if r["strength"] != strength:
+                continue
+            a, b = owner.get(r["a"]), owner.get(r["b"])
+            if a is None or b is None:
+                continue
+            ra, rb = find(a), find(b)
+            if ra == rb:
+                continue
+            box = _union([span[ra], span[rb]])
+            if _area(box) > BLOCK_MAX * sw * sh:
+                continue
+            parent[ra], span[rb] = rb, box
+        groups = {}
+        for uid in parent:
+            groups.setdefault(find(uid), []).append(uid)
+        for uids in groups.values():
+            if len(uids) < 2:
+                continue
+            kids = [units.pop(u) for u in uids]
+            for k in kids:
+                inner[k.id] = k
+            lead = max(kids, key=lambda u: u.importance)
+            hero = next((k for k in kids if k.role == "hero"), None)
+            box = _union([k.box for k in kids])
+            role = "hero" if hero and _area(hero.box) >= BLOCK_HERO * _area(box) else lead.role
+            bid = "block(" + "+".join(sorted(uids)) + ")"
+            units[bid] = Unit(id=bid, members=sorted((m for k in kids for m in k.members), key=lambda m: z[m]), kind="rigid",
+                              box=box, drawn=_union([k.drawn for k in kids]), role=role, confidence=lead.confidence,
+                              importance=max(k.importance for k in kids), edges=_edges(box, sw, sh),
+                              emphasis=max(k.emphasis for k in kids), rotated=any(k.rotated for k in kids), children=kids)
+            for m in units[bid].members:
+                owner[m] = bid
+    for u in units.values():  # attached units follow their host into its block
+        if u.host and u.host not in units:
+            host = units[owner[inner[u.host].members[0]]]
+            b, hb = u.drawn, host.drawn
+            u.host = host.id
+            u.rel = (((b[0] + b[2]) / 2 - hb[0]) / max(hb[2] - hb[0], 1e-6), ((b[1] + b[3]) / 2 - hb[1]) / max(hb[3] - hb[1], 1e-6))
+    return inner
 
 
 def _merge_siblings(units, source, z, sw, sh):

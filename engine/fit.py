@@ -202,7 +202,7 @@ def realize(a, plan, tw, th, focal=True):
 
     placed = []
     for slot in plan.slots:
-        u = a.units[slot.uid]
+        u = a.unit(slot.uid)
         if u.kind == "text":
             place_text(out[u.members[0]], sizer, slot, th)
         else:
@@ -213,8 +213,8 @@ def realize(a, plan, tw, th, focal=True):
     for b in placed:
         grid.mark(b)
     # hosts first: attached units are placed relative to wherever their host ended up
-    for uid in sorted(plan.floating, key=lambda i: (a.units[i].host is not None, -a.units[i].importance)):
-        u = a.units[uid]
+    for uid in sorted(plan.floating, key=lambda i: (a.unit(i).host is not None, -a.unit(i).importance)):
+        u = a.unit(uid)
         if u.host:
             place_attached(out, sizer, a, u, tw, th)
         else:
@@ -226,7 +226,7 @@ def realize(a, plan, tw, th, focal=True):
         place_panel(out, a, pid, tw, th)
     for d in a.decorations:
         place_decoration(out, sizer, a, d, tw, th)
-    for u in [*a.units.values(), *a.decorations]:
+    for u in [*(a.unit(i) for i in {s.uid for s in plan.slots} | set(plan.floating)), *a.decorations]:  # what was placed as one piece
         if u.rotated:
             orient(out, a, u, tw, th)
 
@@ -349,7 +349,7 @@ def place_floating(out, sizer, a, u, k, grid, tw, th, focal=True):
 
 def place_attached(out, sizer, a, u, tw, th):
     """Same relative spot on the host, scaled like the host (never below readable, never off-canvas)."""
-    host = a.units[u.host]
+    host = a.unit(u.host)
     hb = _union_boxes([element_box(out[m]) for m in host.members])
     s = (hb[2] - hb[0]) / max(host.drawn[2] - host.drawn[0], 1e-6)
     s = min(max(s, sizer.floor_scale(u)), tw / max(u.w, 1e-6), th / max(u.h, 1e-6))
@@ -370,7 +370,7 @@ def orient(out, a, u, tw, th):
     centres = [(a.els[m]["x"] + a.els[m]["width"] / 2, a.els[m]["y"] + a.els[m]["height"] / 2) for m in rot]
     if max(math.dist(centres[0], c) for c in centres) > 0.02 * max(u.w, u.h):
         return
-    anchor = _union_boxes([element_box(out[m]) for m in a.units[u.host].members]) if u.host else (0, 0, tw, th)
+    anchor = _union_boxes([element_box(out[m]) for m in a.unit(u.host).members]) if u.host else (0, 0, tw, th)
     now = side_of(_union_boxes([element_box(out[m]) for m in u.members]), anchor)
     flip = u.side[0] * now[0] * u.side[1] * now[1]
     for m in rot:

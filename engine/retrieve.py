@@ -71,7 +71,7 @@ def retrieved(a, sizer, tw, th, deadline=None):
                     slots.append(_place(a, sizer, flow[i], d["units"][j]["box"], tw, th))
                     used.append(flow[i].id)
         floating = [uid for uid in a.units if uid not in used]
-        scales = [s.scale if s.fs is None else s.fs / a.els[a.units[s.uid].members[0]]["font_size"] for s in slots]
+        scales = [s.scale if s.fs is None else s.fs / a.els[a.unit(s.uid).members[0]]["font_size"] for s in slots]
         k = float(np.median(scales)) if scales else math.sqrt(tw * th / (a.sw * a.sh))
         plans.append(Plan("retrieved", {"rank": rank}, slots, floating, k, margin(tw, th), sizer))
     return plans

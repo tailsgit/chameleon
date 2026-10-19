@@ -30,7 +30,7 @@ from itertools import combinations, product
 import numpy as np
 from PIL import Image
 
-from engine.analyze import PRIMARY_ROLES
+from engine.analyze import PRIMARY_ROLES, reading_rows
 from engine.fit import Sizer
 from engine.retrieve import retrieved
 from eval.render import assets_dir
@@ -251,7 +251,7 @@ def solve_column(a, sizer, rows, box, kc, align, vjust, img_mult):
 
 def _at_floor(a, sizer, rows, k, demoted):
     """Something was demoted, or some flowing text is already at its readable minimum."""
-    texts = [a.units[u].members[0] for r in rows for u in r if a.units[u].kind == "text" and u not in demoted]
+    texts = [a.unit(u).members[0] for r in rows for u in r if a.unit(u).kind == "text" and u not in demoted]
     return bool(demoted) or any(math.floor(a.els[t]["font_size"] * k + 1e-9) <= sizer.fs_min(t) for t in texts)
 
 
@@ -260,13 +260,19 @@ def _solve(a, sizer, rows, box, kc, align, vjust, img_mult, cols):
     demoted = []
     while rows:
         res = _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue=False, cols=cols)
+        # a block keeps its insides as designed unless that leaves its text unreadable: then open it
+        tight = [s.uid for s in res[0] if a.unit(s.uid).children and s.scale < sizer.read_scale(a.unit(s.uid)) - 1e-9] if res \
+            else [u for r in rows for u in r if a.unit(u).children]
+        if tight:
+            rows = _open(a, rows, max(tight, key=lambda u: a.unit(u).w * a.unit(u).h))
+            continue
         if res:
             return res[0], res[1], demoted
-        victims = [u for r in rows for u in r if a.units[u].role != "headline"
-                   and not (a.units[u].role == "hero" and big_hero(a))]  # a big photo is never demoted
+        victims = [u for r in rows for u in r if "headline" not in a.unit(u).roles
+                   and not ("hero" in a.unit(u).roles and big_hero(a))]  # a big photo is never demoted
         if not victims:
             break
-        v = min(victims, key=lambda u: a.units[u].importance)
+        v = min(victims, key=lambda u: a.unit(u).importance)
         demoted.append(v)
         rows = [[u for u in r if u != v] for r in rows]
         rows = [r for r in rows if r]
@@ -276,6 +282,16 @@ def _solve(a, sizer, rows, box, kc, align, vjust, img_mult, cols):
             return res[0], res[1], demoted
         demoted += [u for r in rows for u in r]
     return [], 0.0, demoted
+
+
+def _open(a, rows, bid):
+    """Rows with block `bid` replaced by its children, in their own reading order, where it was."""
+    kids = reading_rows({k.id: k.drawn for k in a.unit(bid).children})
+    out = []
+    for r in rows:
+        rest = [u for u in r if u != bid]
+        out += ([rest] if rest else []) + (kids if bid in r else [])
+    return out
 
 
 def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue, cols=1):
@@ -289,7 +305,7 @@ def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue, cols=1):
 
     def measure(k):
         if cols > 1:  # newspaper columns: here `lines` are the columns
-            ext = [(uid, sizer.unit_extent(a.units[uid], k, cw, img_mult=img_mult, rescue=rescue)) for r in rows for uid in r]
+            ext = [(uid, sizer.unit_extent(a.unit(uid), k, cw, img_mult=img_mult, rescue=rescue)) for r in rows for uid in r]
             if len(ext) < cols:
                 return [ext], math.inf
             height = lambda c: sum(e.h for _u, e in c) + gap * (len(c) - 1) + c[-1][1].slack
@@ -301,7 +317,7 @@ def _column(a, sizer, rows, box, kc, align, vjust, img_mult, rescue, cols=1):
         for row in rows:
             cur, used = [], 0.0
             for uid in row:
-                e = sizer.unit_extent(a.units[uid], k, W, img_mult=img_mult, rescue=rescue)
+                e = sizer.unit_extent(a.unit(uid), k, W, img_mult=img_mult, rescue=rescue)
                 need = e.w + (gap if cur else 0)
                 if cur and used + need > W:
                     lines.append(cur)
@@ -373,7 +389,7 @@ def flow(a, primaries_only):
     floating = [uid for uid, u in a.units.items() if u.floating]
     rows = []
     for r in a.rows:
-        keep = [u for u in r if not primaries_only or a.units[u].role in PRIMARY_ROLES]
+        keep = [u for u in r if not primaries_only or a.unit(u).role in PRIMARY_ROLES]
         floating += [u for u in r if u not in keep]
         if keep:
             rows.append(keep)
