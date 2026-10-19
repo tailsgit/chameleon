@@ -1,9 +1,9 @@
 # Benchmark summary: crello-holdout
 
-Engine commit `v2-1-gaefa4de-dirty`, 300 cases (100 designs), render=no, contrast=no, jobs=8.
+Engine commit `v2-2-gc68ee0e-dirty`, 300 cases (100 designs), render=no, contrast=no, jobs=8.
 
 - **Cases passing every hard rule: 295/300** (98.3%)
-- **Average score: 89.32** / 100
+- **Average score: 89.27** / 100
 - Crashes (resize raised): 0
 - Engine fell back to a plain uniform scale: 0 cases
 - Cases where some layout candidate raised (others used): 0
@@ -18,7 +18,7 @@ Engine commit `v2-1-gaefa4de-dirty`, 300 cases (100 designs), render=no, contras
 
 | overlap | holders | small_text | headline | scale | key_size | text_over_image | relationships | share_drift | space | balance | floating | emphasis | siblings | alignment | reading_order |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 0.257 | 0.033 | 0.057 | 0.045 | 0.128 | 0.176 | 0.034 | 0.432 | 0.139 | 0.023 | 0.041 | 0.360 | 0.035 | 0.058 | 0.229 | 0.124 |
+| 0.257 | 0.033 | 0.058 | 0.048 | 0.129 | 0.178 | 0.034 | 0.432 | 0.139 | 0.023 | 0.042 | 0.360 | 0.035 | 0.058 | 0.229 | 0.124 |
 
 ## By target format
 
@@ -31,7 +31,7 @@ Engine commit `v2-1-gaefa4de-dirty`, 300 cases (100 designs), render=no, contras
 | Instagram Portrait | 1080x1350 | 20 | 20 | 91.6 |
 | Instagram Post | 1080x1080 | 17 | 17 | 88.3 |
 | Instagram Story | 1080x1920 | 20 | 20 | 89.3 |
-| Leaderboard | 728x90 | 20 | 20 | 87.1 |
+| Leaderboard | 728x90 | 20 | 20 | 86.3 |
 | LinkedIn Banner | 1584x396 | 16 | 16 | 90.5 |
 | Medium Rectangle | 300x250 | 18 | 16 | 87.1 |
 | Pinterest Pin | 1000x1500 | 19 | 19 | 90.6 |
@@ -52,6 +52,7 @@ Engine commit `v2-1-gaefa4de-dirty`, 300 cases (100 designs), render=no, contras
 | crello_5dcbd0779fea0cc374098ede__email_header | 63.3 |  |
 | crello_588a0fc195a7a863ddcc4509__wide_skyscraper | 65.0 |  |
 | crello_5e7c749c4b3890eb07230de5__email_header | 66.6 |  |
+| crello_58ab127e95a7a863ddcc75f7__leaderboard | 67.4 |  |
 | crello_5c6c325085ea3c16f9256af7__leaderboard | 68.5 |  |
 | crello_5eb180ed499b85dcc75848d8__facebook_post | 69.1 |  |
 | crello_5c6c325085ea3c16f9256af7__wide_skyscraper | 70.2 |  |
@@ -73,11 +74,10 @@ Engine commit `v2-1-gaefa4de-dirty`, 300 cases (100 designs), render=no, contras
 | crello_5930129195a7a863ddcdc014__instagram_story | 77.1 |  |
 | crello_5928035b95a7a863ddcd8ff7__facebook_post | 77.4 |  |
 | crello_5f5f3fdfa637ee11e3358fbe__instagram_story | 77.5 |  |
-| crello_58cfaec595a7a863ddccc715__facebook_cover | 77.5 |  |
 
 ## Timings (per case, this machine, 8 worker processes in parallel)
 
-- resize: mean 7631 ms, median 6907 ms, p95 15588 ms, max 28223 ms
-- check: mean 5 ms, median 4 ms, p95 11 ms, max 20 ms
-- score: mean 7 ms, median 5 ms, p95 21 ms, max 53 ms
+- resize: mean 7597 ms, median 6977 ms, p95 14288 ms, max 24876 ms
+- check: mean 4 ms, median 4 ms, p95 10 ms, max 25 ms
+- score: mean 7 ms, median 5 ms, p95 19 ms, max 42 ms
 - render: n/a

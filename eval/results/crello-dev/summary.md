@@ -1,9 +1,9 @@
 # Benchmark summary: crello-dev
 
-Engine commit `v2-1-gaefa4de`, 600 cases (200 designs), render=no, contrast=no, jobs=8.
+Engine commit `v2-2-gc68ee0e`, 600 cases (200 designs), render=no, contrast=no, jobs=8.
 
 - **Cases passing every hard rule: 592/600** (98.7%)
-- **Average score: 89.26** / 100
+- **Average score: 89.32** / 100
 - Crashes (resize raised): 0
 - Engine fell back to a plain uniform scale: 0 cases
 - Cases where some layout candidate raised (others used): 0
@@ -18,7 +18,7 @@ Engine commit `v2-1-gaefa4de`, 600 cases (200 designs), render=no, contrast=no, 
 
 | overlap | holders | small_text | headline | scale | key_size | text_over_image | relationships | share_drift | space | balance | floating | emphasis | siblings | alignment | reading_order |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 0.240 | 0.026 | 0.046 | 0.038 | 0.128 | 0.184 | 0.060 | 0.394 | 0.127 | 0.029 | 0.032 | 0.346 | 0.029 | 0.092 | 0.201 | 0.119 |
+| 0.239 | 0.026 | 0.046 | 0.038 | 0.127 | 0.183 | 0.058 | 0.394 | 0.126 | 0.028 | 0.033 | 0.347 | 0.029 | 0.092 | 0.201 | 0.119 |
 
 ## By target format
 
@@ -31,8 +31,8 @@ Engine commit `v2-1-gaefa4de`, 600 cases (200 designs), render=no, contrast=no, 
 | Instagram Portrait | 1080x1350 | 42 | 42 | 92.1 |
 | Instagram Post | 1080x1080 | 35 | 35 | 88.3 |
 | Instagram Story | 1080x1920 | 41 | 41 | 91.0 |
-| Leaderboard | 728x90 | 36 | 34 | 85.2 |
-| LinkedIn Banner | 1584x396 | 47 | 47 | 88.1 |
+| Leaderboard | 728x90 | 36 | 34 | 85.0 |
+| LinkedIn Banner | 1584x396 | 47 | 47 | 89.0 |
 | Medium Rectangle | 300x250 | 38 | 38 | 88.8 |
 | Pinterest Pin | 1000x1500 | 35 | 34 | 90.6 |
 | Presentation 16:9 | 1920x1080 | 39 | 39 | 88.9 |
@@ -52,11 +52,10 @@ Engine commit `v2-1-gaefa4de`, 600 cases (200 designs), render=no, contrast=no, 
 | crello_5952967595a7a863ddce0220__wide_skyscraper | 92.3 | hidden_element:svg1 |
 | crello_5ac4a8ce4b568b8eece2fd9b__wide_skyscraper | 94.8 | hidden_element:svg3;hidden_element:svg4 |
 | crello_5fabaa59a637ee11e3a88e87__email_header | 98.6 | hidden_element:svg1 |
-| crello_5e4facf31cc98b350aeffeeb__linkedin_banner | 47.1 |  |
 | crello_5e563cae1cc98b350a78b20a__leaderboard | 50.8 |  |
 | crello_5d08e5d48cba87f943d052da__facebook_post | 51.1 |  |
+| crello_5db1a542abc8ea6d1cd835af__leaderboard | 53.4 |  |
 | crello_5bdc41119259f9ba5416c94c__instagram_post | 54.3 |  |
-| crello_5db1a542abc8ea6d1cd835af__leaderboard | 60.2 |  |
 | crello_59b7ff721350e8329300fd73__medium_rectangle | 60.9 |  |
 | crello_5ef32868499b85dcc76e66fc__email_header | 61.1 |  |
 | crello_5e563cae1cc98b350a78b20a__x_post | 62.6 |  |
@@ -74,10 +73,11 @@ Engine commit `v2-1-gaefa4de`, 600 cases (200 designs), render=no, contrast=no, 
 | crello_5d9cad46abc8ea6d1c234bd4__x_post | 68.8 |  |
 | crello_5cf14d798cba87f9434fefb8__instagram_post | 69.3 |  |
 | crello_5d691f00abc8ea6d1c396bbf__presentation_16_9 | 69.5 |  |
+| crello_5952a15795a7a863ddce0a02__presentation_16_9 | 69.6 |  |
 
 ## Timings (per case, this machine, 8 worker processes in parallel)
 
-- resize: mean 7372 ms, median 6420 ms, p95 15471 ms, max 23277 ms
-- check: mean 4 ms, median 3 ms, p95 10 ms, max 18 ms
-- score: mean 6 ms, median 5 ms, p95 19 ms, max 39 ms
+- resize: mean 6636 ms, median 5710 ms, p95 13795 ms, max 21447 ms
+- check: mean 4 ms, median 3 ms, p95 9 ms, max 18 ms
+- score: mean 6 ms, median 4 ms, p95 17 ms, max 31 ms
 - render: n/a

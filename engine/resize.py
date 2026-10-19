@@ -22,20 +22,23 @@ from engine.select import _passes, fallback, repair, select
 from eval.score import _area, _drawn_box, key_elements, score
 
 SAME_ASPECT = 0.02  # relative aspect-ratio change below which the source layout is kept as is
-BUDGET_S = 13.5     # seconds per case: then no new candidates, the best so far is chosen (the selection
-                    # already under way still finishes; this leaves it room to end within 15 s under emulation)
+BUDGET_S = 14.5     # seconds per case, everything included (the brief's reference: 15 s)
+GEN_SHARE = 0.5     # plans are generated in the first half of it...
+SELECT_COST = 4     # ...and realising stops while the rest still covers judging every candidate made: the guard
+                    # and select check and score each about this many times (measured per candidate as we go)
 GUARD = 0.7         # a retrieved layout must give the headline and main image at least this share of the best recipe's
 log = logging.getLogger(__name__)
 
 
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
     target = {"width": int(target_canvas["width"]), "height": int(target_canvas["height"])}
-    deadline = time.monotonic() + BUDGET_S
+    start = time.monotonic()
+    deadline = start + BUDGET_S
     try:
         a = analyze(source)
-        outputs, recipes = [], []
-        for plan in generate(a, target["width"], target["height"], deadline):
-            if outputs and time.monotonic() > deadline:
+        outputs, recipes, per = [], [], 0.0
+        for plan in generate(a, target["width"], target["height"], start + GEN_SHARE * BUDGET_S):
+            if outputs and time.monotonic() + SELECT_COST * per * len(outputs) > deadline:
                 log.info("time budget reached after %d candidates", len(outputs))
                 break
             # stand-out floating units: centred in their free space, or near their source side; the scorer picks
@@ -44,6 +47,10 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                 try:
                     outputs.append(realize(a, plan, target["width"], target["height"], focal=f))
                     recipes.append(plan.recipe)
+                    if len(outputs) == 1:  # what judging one candidate costs on this machine
+                        t = time.monotonic()
+                        _passes(source, target, outputs[0]) and score(source, target, outputs[0])
+                        per = time.monotonic() - t
                 except Exception:
                     log.exception("recipe %s %s failed", plan.recipe, plan.knobs)
         preferred = None
