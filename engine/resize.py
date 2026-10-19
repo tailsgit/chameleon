@@ -24,8 +24,8 @@ from eval.score import _area, _drawn_box, key_elements, score
 SAME_ASPECT = 0.02  # relative aspect-ratio change below which the source layout is kept as is
 BUDGET_S = 14.5     # seconds per case, everything included (the brief's reference: 15 s)
 GEN_SHARE = 0.5     # plans are generated in the first half of it...
-SELECT_COST = 4     # ...and realising stops while the rest still covers judging every candidate made: the guard
-                    # and select check and score each about this many times (measured per candidate as we go)
+SELECT_COST = 5     # ...and realising stops while the rest still covers judging every candidate made: the guard
+                    # and select check, score and test legibility of each, about this many times (measured as we go)
 GUARD = 0.7         # a retrieved layout must give the headline and main image at least this share of the best recipe's
 log = logging.getLogger(__name__)
 
@@ -43,13 +43,14 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                 break
             # stand-out floating units: centred in their free space, or near their source side; the scorer picks
             focal = (True, False) if any(a.units[u].emphasis for u in plan.floating) else (True,)
-            for f in focal:
+            # text kept on a panel that can't grow by shrinking it, or left overhanging: an extra candidate, not a replacement
+            for f, k in [(f, k) for f in focal for k in ((True, False) if a.panels else (True,))]:
                 try:
-                    outputs.append(realize(a, plan, target["width"], target["height"], focal=f))
+                    outputs.append(realize(a, plan, target["width"], target["height"], focal=f, keep_on_panel=k))
                     recipes.append(plan.recipe)
-                    if len(outputs) == 1:  # what judging one candidate costs on this machine
+                    if len(outputs) <= 2:  # what judging one candidate costs on this machine (the second: the first warms the source's caches)
                         t = time.monotonic()
-                        _passes(source, target, outputs[0]) and score(source, target, outputs[0])
+                        _passes(source, target, outputs[-1]) and score(source, target, outputs[-1])
                         per = time.monotonic() - t
                 except Exception:
                     log.exception("recipe %s %s failed", plan.recipe, plan.knobs)

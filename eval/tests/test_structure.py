@@ -144,3 +144,30 @@ def test_an_oversized_panel_fits_around_its_text():
     p, h = out["panel"], out["h"]
     assert p["x"] <= h["x"] and p["y"] <= h["y"]  # still behind its text...
     assert p["width"] * p["height"] < 0.5 * 1920 * 1080  # ...but no longer a mostly empty square
+
+
+def test_near_full_bleed_photo_and_colour_tiles_fill_the_target():
+    def rect(id, x, y, w, h, fill):
+        return {"id": id, "type": "shape", "shape_type": "rectangle", "x": x, "y": y, "width": w, "height": h, "fill_color": fill}
+    photo = image("photo", 20, 20, 1040, 1040, fit="cover")  # a framed full-bleed photo: about 93% of the canvas...
+    src = design(1080, 1080, [rect("left", 0, 0, 540, 1080, "rgba(200,0,0,1)"), rect("right", 540, 0, 540, 1080, "rgba(0,0,200,1)"),
+                              photo, text("t", 100, 400, 880, 120, "A headline", fs=60)])
+    assert set(analyze(src).background) == {"left", "right", "photo"}  # ...under 95%: one more tile on the colour tiles
+    target = {"width": 1920, "height": 600}
+    out = {e["id"]: e for e in resize(src, target)["elements"]}
+    assert (out["left"]["x"], out["left"]["width"], out["right"]["x"] + out["right"]["width"]) == (0, 960, 1920)
+    assert round(out["photo"]["x"]) == round(20 * 1920 / 1080) and round(out["photo"]["height"]) == round(1040 * 600 / 1080)
+    src["elements"] = [photo, src["elements"][-1]]
+    assert analyze(src).background == []
+    photo.update(x=10, y=10, width=1060, height=1060)  # about 96%: a background on its own
+    assert analyze(src).background == ["photo"]
+    assert check(src, target, resize(src, target)) == []
+
+
+def test_coverage_penalty_sees_bare_canvas():
+    from eval.score import coverage, score
+    bg = {"id": "bg", "type": "shape", "shape_type": "rectangle", "x": 0, "y": 0, "width": 1000, "height": 1000, "fill_color": "rgba(0,0,0,1)"}
+    src = design(1000, 1000, [bg])
+    half = design(1000, 1000, [dict(bg, width=500)])
+    assert coverage(str(src).replace("'", '"')) == 1.0 and abs(coverage(str(half).replace("'", '"')) - 0.5) < 0.03
+    assert score(src, src["canvas"], half)["breakdown"]["coverage"]["penalty"] == 1.0

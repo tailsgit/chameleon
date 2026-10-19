@@ -113,3 +113,30 @@ def test_text_newly_on_a_busy_image_is_rejected(tmp_path, monkeypatch):
     assert select(src, src["canvas"], [on_photo, src]) is not on_photo
     assert select(src, src["canvas"], [on_photo]) is on_photo  # if that is all there is, it is still returned
     score_mod._asset_grey.cache_clear()
+
+
+def _panel_design():
+    """White text on a dark panel that covers the left 35% (a compact panel) of a white design."""
+    return {"canvas": {"width": 1000, "height": 1000}, "elements": [
+        {"id": "panel", "type": "shape", "x": 0, "y": 0, "width": 350, "height": 1000, "shape_type": "rectangle",
+         "fill_color": "rgba(20,20,20,1)", "z_index": 0},
+        {"id": "title", "type": "text", "x": 20, "y": 400, "width": 310, "height": 100, "content": "Summer", "font_family": "Solstice Sans",
+         "font_size": 72, "color": "rgba(255,255,255,1)", "z_index": 1}]}
+
+
+def test_text_off_its_backdrop_and_lost_contrast_are_detected():
+    from eval.score import contrast_drops, text_off_backdrop
+    src = _panel_design()
+    assert text_off_backdrop(src, src["canvas"], src) == [] and contrast_drops(src, src["canvas"], src) == []
+    off = {"canvas": src["canvas"], "elements": [src["elements"][0], dict(src["elements"][1], x=560)]}  # white on white
+    assert [t for t, _b, _s in text_off_backdrop(src, src["canvas"], off)] == ["title"]
+    assert [t for t, _a, _b in contrast_drops(src, src["canvas"], off)] == ["title"]
+
+
+def test_select_prefers_legible_and_falls_back_to_best_contrast():
+    from engine.select import select
+    src = _panel_design()
+    half = {"canvas": src["canvas"], "elements": [src["elements"][0], dict(src["elements"][1], x=200)]}  # half on: off its panel
+    off = {"canvas": src["canvas"], "elements": [src["elements"][0], dict(src["elements"][1], x=560)]}
+    assert select(src, src["canvas"], [off, half, src]) is src
+    assert select(src, src["canvas"], [off, half]) is half  # none legible: the one that kept more contrast

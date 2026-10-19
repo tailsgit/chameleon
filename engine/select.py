@@ -1,8 +1,8 @@
 """Choose the winning candidate, and the safety nets behind it.
 
-1. Drop duplicate candidates and any with a hard-rule violation (eval.check), then any that
-   put text newly on top of a busy image (eval.score.busy_text_over_image), then any that shrink a large
-   element far below its share of the canvas (eval.score.large_share_kept), each unless that is all of them.
+1. Drop duplicate candidates and any with a hard-rule violation (eval.check), then keep the best tier
+   available of: no text both off the element it sat on and short of its contrast; no text newly on a
+   busy image; no large element far below its share of the canvas (see _safest).
 2. Rank the rest by the geometric score (eval.score, ~1 ms each), render the top
    RENDER_TOP (fewer once the deadline has passed) and pick the best full score including contrast. Rendering is
    expensive under amd64 emulation, so only those few get rendered. A `preferred`
@@ -21,7 +21,7 @@ import time
 
 from engine.analyze import full_box
 from eval.check import check, text_layout
-from eval.score import SHARE_FLOOR, busy_text_over_image, large_share_kept, score
+from eval.score import SHARE_FLOOR, busy_text_over_image, contrast_drops, contrast_kept, contrast_worst, large_share_kept, score, text_off_backdrop
 
 RENDER_TOP = 10
 PREFER_MARGIN = 2.0  # points out of 100: "clearly better" than the preferred candidate
@@ -39,14 +39,7 @@ def select(source, target, outputs, preferred=None, deadline=None):
             unique.append(o)
 
     passing = [(o, score(source, target, o)["total"] + bonus(o)) for o in unique if _passes(source, target, o)]
-    clean = [(o, s) for o, s in passing if not busy_text_over_image(source, target, o)]
-    if clean and len(clean) < len(passing):
-        log.info("rejected %d candidates with text newly on a busy image", len(passing) - len(clean))
-    passing = clean or passing  # never left with nothing: then the least bad still competes on score
-    big = [(o, s) for o, s in passing if large_share_kept(source, target, o) >= SHARE_FLOOR]
-    if big and len(big) < len(passing):
-        log.info("rejected %d candidates that shrink a large element far below its share", len(passing) - len(big))
-    passing = big or passing
+    passing = _safest(source, target, passing)
     if passing:
         top = sorted(passing, key=lambda t: -t[1])[:RENDER_TOP]
         best, rendered = top[0][0], []
@@ -69,6 +62,36 @@ def select(source, target, outputs, preferred=None, deadline=None):
         except Exception:
             return math.inf, 0
     return min(repaired, key=badness)
+
+
+def _safest(source, target, passing):
+    """The candidates in the best tier available, judged together (one filter after another could leave
+    only candidates the next one rejects): first, no text both ends up mostly off the card, label or panel it
+    sat on (eval.score.text_off_backdrop) and loses its contrast (contrast_drops, estimated without
+    rendering); then no
+    text newly on a busy image (busy_text_over_image); then no large element far below its share
+    (large_share_kept). When no candidate is legible, the one whose worst text kept the most of its contrast
+    remains (then by the contrast kept on average, then the score)."""
+    if not passing:
+        return passing
+    tiers = []
+    for o, s in passing:
+        off = {t for t, _b, _s in text_off_backdrop(source, target, o)}
+        legible = not off or not off & {t for t, _s, _o in contrast_drops(source, target, o)}
+        tiers.append(((legible, not busy_text_over_image(source, target, o), large_share_kept(source, target, o) >= SHARE_FLOOR), o, s))
+    best = max(t for t, _o, _s in tiers)
+    kept = [(o, s) for t, o, s in tiers if t == best]
+    if not best[0]:  # nothing is legible everywhere: the best worst-case contrast wins, whatever else scores
+        rank = lambda t: (contrast_worst(source, target, t[1]), contrast_kept(source, target, t[1]), t[2])
+        _t, o, s = max(tiers, key=rank)
+        log.info("no legible candidate of %d: chose the best contrast", len(tiers))
+        return [(o, s)]
+    names = ("text off its backdrop or contrast lost", "text newly on a busy image", "a large element far below its share")
+    for k, name in enumerate(names):
+        n = sum(1 for t, _o, _s in tiers if t[:k] == best[:k] and t[k] < best[k])
+        if n:
+            log.info("rejected %d candidates with %s", n, name)
+    return kept
 
 
 def _passes(source, target, output):
