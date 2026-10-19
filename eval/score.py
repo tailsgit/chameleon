@@ -378,6 +378,13 @@ def contrast_kept(source, target_canvas, output):
     return sum(kept) / len(kept) if kept else 1.0
 
 
+def contrast_worst(source, target_canvas, output):
+    """The least any text kept of its source contrast (min over texts of min(1, output / source))."""
+    src = _text_contrasts(json.dumps(source, sort_keys=True))
+    out = _text_contrasts(json.dumps(output, sort_keys=True))
+    return min((min(1.0, out[t] / src[t]) for t in src if t in out), default=1.0)
+
+
 @lru_cache(maxsize=256)
 def _text_contrasts(design_json):
     design = json.loads(design_json)
@@ -905,6 +912,25 @@ def contrast_penalty(c: Ctx):
     return (sum(pens) / len(pens) if pens else 0.0), ", ".join(low)
 
 
+def legibility_penalty(c: Ctx):
+    """contrast_penalty without rendering, so every score sees white text on a white background: the
+    same bars and shortfall, with each text's contrast estimated from the layers under its box
+    (_text_contrasts, as for contrast_drops)."""
+    src = _text_contrasts(json.dumps(c.source, sort_keys=True))
+    pens, low = [], []
+    for eid, worst in _text_contrasts(json.dumps(c.output, sort_keys=True)).items():
+        if eid not in c.out:
+            continue
+        el = c.out[eid]
+        fs = int(el["font_size"])
+        need = CONTRAST_MIN_LARGE if fs >= 24 or (el.get("font_weight") == "bold" and fs >= 19) else CONTRAST_MIN
+        need = min(need, src.get(eid, need))
+        pens.append(max(0.0, min(1.0, (need - worst) / max(need - 1, 1e-6))))
+        if worst < need:
+            low.append(f"{eid} ~{worst:.1f}:1 (source ~{src.get(eid, float('nan')):.1f}:1)")
+    return (sum(pens) / len(pens) if pens else 0.0), ", ".join(low)
+
+
 @lru_cache(maxsize=8)  # the engine scores many candidates against one source: render it once
 def _contrast_ratios(design_json):
     """{text id: 10th-percentile WCAG ratio of its colour against what is drawn under its lines}."""
@@ -953,6 +979,7 @@ PENALTIES = {  # name: (function, weight, needs_render). Fitted to all hand labe
     "siblings": (siblings_penalty, 0.5, False),
     "alignment": (alignment_penalty, 0.68, False),
     "reading_order": (reading_order_penalty, 0.63, False),
+    "legibility": (legibility_penalty, 2.0, False),  # 153 labels: pooled 0.866 (off) -> 0.869 (best of 0.5-4); the fit leaves it at the floor (few labelled outputs lose contrast)
     "contrast": (contrast_penalty, 0.5, True),
 }
 

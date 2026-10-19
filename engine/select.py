@@ -21,7 +21,7 @@ import time
 
 from engine.analyze import full_box
 from eval.check import check, text_layout
-from eval.score import SHARE_FLOOR, busy_text_over_image, contrast_drops, contrast_kept, large_share_kept, score, text_off_backdrop
+from eval.score import SHARE_FLOOR, busy_text_over_image, contrast_drops, contrast_kept, contrast_worst, large_share_kept, score, text_off_backdrop
 
 RENDER_TOP = 10
 PREFER_MARGIN = 2.0  # points out of 100: "clearly better" than the preferred candidate
@@ -69,8 +69,8 @@ def _safest(source, target, passing):
     only candidates the next one rejects): first, every text stays on the element it sat on and keeps its
     contrast (eval.score.text_off_backdrop, contrast_drops; contrast estimated without rendering); then no
     text newly on a busy image (busy_text_over_image); then no large element far below its share
-    (large_share_kept). When no candidate is legible, the one with the fewest texts that lost contrast
-    remains (then by the other two tiers, then the contrast kept)."""
+    (large_share_kept). When no candidate is legible, the one whose worst text kept the most of its contrast
+    remains (then by the contrast kept on average, then the score)."""
     if not passing:
         return passing
     tiers = []
@@ -79,8 +79,8 @@ def _safest(source, target, passing):
         tiers.append(((legible, not busy_text_over_image(source, target, o), large_share_kept(source, target, o) >= SHARE_FLOOR), o, s))
     best = max(t for t, _o, _s in tiers)
     kept = [(o, s) for t, o, s in tiers if t == best]
-    if not best[0]:  # nothing is legible everywhere: the best contrast wins over the later tiers
-        rank = lambda t: (-len(contrast_drops(source, target, t[1])), t[0][1:], contrast_kept(source, target, t[1]))
+    if not best[0]:  # nothing is legible everywhere: the best worst-case contrast wins, whatever else scores
+        rank = lambda t: (contrast_worst(source, target, t[1]), contrast_kept(source, target, t[1]), t[2])
         _t, o, s = max(tiers, key=rank)
         log.info("no legible candidate of %d: chose the best contrast", len(tiers))
         return [(o, s)]

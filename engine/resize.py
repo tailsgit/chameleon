@@ -47,9 +47,9 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                 try:
                     outputs.append(realize(a, plan, target["width"], target["height"], focal=f))
                     recipes.append(plan.recipe)
-                    if len(outputs) == 1:  # what judging one candidate costs on this machine
+                    if len(outputs) <= 2:  # what judging one candidate costs on this machine (the second: the first warms the source's caches)
                         t = time.monotonic()
-                        _passes(source, target, outputs[0]) and score(source, target, outputs[0])
+                        _passes(source, target, outputs[-1]) and score(source, target, outputs[-1])
                         per = time.monotonic() - t
                 except Exception:
                     log.exception("recipe %s %s failed", plan.recipe, plan.knobs)
