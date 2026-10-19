@@ -11,9 +11,13 @@ FONTS = ["", "Bebas Neue", "Playfair Display"]
 FORMATS = ["Instagram"]
 
 
-def png(w, h, colour=(255, 0, 0, 255)):
+def png(w, h, colour=None):
+    """A flat colour, or (default) a red-to-blue gradient: a picture, not a colour panel."""
     buf = io.BytesIO()
-    Image.new("RGBA", (w, h), colour).save(buf, "PNG")
+    img = Image.new("RGBA", (w, h), colour or (255, 0, 0, 255))
+    if colour is None:
+        img.putdata([(255 * (w - 1 - x) // max(w - 1, 1), 0, 255 * x // max(w - 1, 1), 255) for _y in range(h) for x in range(w)])
+    img.save(buf, "PNG")
     return {"bytes": buf.getvalue(), "path": None}
 
 
@@ -65,3 +69,15 @@ def test_font_mapping_and_coverage():
     assert family("Playfair Display") == "Solstice Serif" and family("Bebas Neue") == "Solstice Sans"
     assert missing_glyphs("Hello, world!", "Solstice Sans") == []
     assert missing_glyphs("Привет", "Solstice Sans")  # would render as boxes
+
+
+def test_flat_colour_crop_becomes_a_rectangle():
+    r = row([{"type": "SvgElement", "left": 0.0, "top": 0.0, "width": 500.0, "height": 1000.0, "image": png(50, 100, (10, 20, 30, 128))},
+             {"type": "SvgElement", "left": 500.0, "top": 0.0, "width": 500.0, "height": 1000.0, "image": png(50, 100)}])
+    design, meta, images = convert(r, FONTS, FORMATS)
+    panel, picture = design["elements"]
+    assert panel["type"] == "shape" and panel["shape_type"] == "rectangle"
+    *rgb, alpha = (float(v) for v in panel["fill_color"][5:-1].split(","))
+    assert max(abs(c - t) for c, t in zip(rgb, (10, 20, 30))) <= 1 and alpha == 0.502  # resampling rounds by 1
+    assert picture["type"] == "image" and list(images) == [picture["asset_id"]]
+    assert meta["flat_to_shape"] == {"SvgElement": 1}
