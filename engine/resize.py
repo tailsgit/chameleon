@@ -24,8 +24,8 @@ from eval.score import _area, _drawn_box, key_elements, score
 SAME_ASPECT = 0.02  # relative aspect-ratio change below which the source layout is kept as is
 BUDGET_S = 14.5     # seconds per case, everything included (the brief's reference: 15 s)
 GEN_SHARE = 0.5     # plans are generated in the first half of it...
-SELECT_COST = 4     # ...and realising stops while the rest still covers judging every candidate made: the guard
-                    # and select check and score each about this many times (measured per candidate as we go)
+SELECT_COST = 5     # ...and realising stops while the rest still covers judging every candidate made: the guard
+                    # and select check, score and test legibility of each, about this many times (measured as we go)
 GUARD = 0.7         # a retrieved layout must give the headline and main image at least this share of the best recipe's
 log = logging.getLogger(__name__)
 

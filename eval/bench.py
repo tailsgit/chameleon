@@ -133,6 +133,8 @@ def _one(job):
     msgs = [r.getMessage() for r in log.records]
     row["winner"] = next((m.split(": ", 1)[1] for m in msgs if m.startswith("winner: ")), "")
     row["budget_hit"] = int(any(m.startswith("time budget reached") for m in msgs))
+    row["illegible_rejected"] = sum(int(m.split()[1]) for m in msgs if m.startswith("rejected") and "backdrop or contrast" in m)
+    row["no_legible"] = int(any(m.startswith("no legible candidate") for m in msgs))
     row["guard_dropped"] = sum(int(m.split()[2]) for m in msgs if m.startswith("guard dropped"))
     row["fallback"] = sum("fallback" in m for m in msgs)
     row["candidate_errors"] = sum("failed" in m and "fallback" not in m for m in msgs)
@@ -171,7 +173,7 @@ def _warm_up(render=False):
 
 def _write_csv(rows, path):
     cols = ["case", "sample", "format", "width", "height", "passed", "violations", "total",
-            *PENALTIES, "rules", "winner", "budget_hit", "guard_dropped", "fallback", "candidate_errors", "resize_ms", "check_ms", "score_ms", "render_ms", "error"]
+            *PENALTIES, "rules", "winner", "budget_hit", "guard_dropped", "illegible_rejected", "no_legible", "fallback", "candidate_errors", "resize_ms", "check_ms", "score_ms", "render_ms", "error"]
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()

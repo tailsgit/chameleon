@@ -54,6 +54,12 @@ ROW_GAP = 0.1                # side-by-side units closer than this (x canvas wid
 FOCUS_OFF_CANVAS = 0.35      # ...or, alone in its column, this far from the canvas centre (x canvas width)
 FOCUS_FREE = 0.05            # off-centre by less than this is centred
 SCALE_FREE, SCALE_FULL = 1.0, 0.4  # headline/hero at this share of the size the target affords: no / full penalty
+BACKDROP_ON = 0.95           # a text this much inside one element (a panel, card, shape or image) sits on it...
+BACKDROP_KEEP = 0.9          # ...and a candidate where it is less than this much on it is rejected
+CONTRAST_GRID = (32, 8)      # points sampled under a text's box (across, down)
+CONTRAST_LOW = 25            # a text's contrast: this percentile of the WCAG ratios at those points
+CONTRAST_DROP = 0.5          # rejected when it falls below this share of the source's contrast...
+CONTRAST_OK = 3.0            # ...and below WCAG's large-text minimum (never asked to beat the source)
 LARGE_SHARE = 0.1            # an element covering this share of the source canvas is large...
 SHARE_FLOOR = 0.5            # ...and no candidate may leave it less than this share of the share it can keep
 DRIFT_FULL = math.log(4)     # an element at 4x (or 1/4) the share it can keep: full share drift
@@ -313,6 +319,134 @@ def _busyness(el, region):
 
 def _inter(a, b):
     return _area((max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])))
+
+
+def text_off_backdrop(source, target_canvas, output):
+    """[(text id, backdrop id, share of the text on it)] for texts that sat on an element in the source
+    (>= BACKDROP_ON inside the smallest non-text, non-background element under it) and are now less than
+    BACKDROP_KEEP on it: white text off its dark panel, a label off its card. Any generator; the engine
+    rejects such candidates."""
+    out = {e["id"]: e for e in output["elements"]}
+    bad = []
+    for t, b in _backdrops(json.dumps(source, sort_keys=True)):
+        if t in out and b in out:
+            tb = _drawn_box(out[t])
+            share = _inter(tb, _drawn_box(out[b])) / max(_area(tb), 1e-9)
+            if share < BACKDROP_KEEP:
+                bad.append((t, b, share))
+    return bad
+
+
+@lru_cache(maxsize=64)
+def _backdrops(source_json):
+    """((text id, the element it sits on), ...) in the source."""
+    source = json.loads(source_json)
+    sw, sh = source["canvas"]["width"], source["canvas"]["height"]
+    order = {e["id"]: (e.get("z_index", 0), n) for n, e in enumerate(source["elements"])}
+    pairs = []
+    for t in source["elements"]:
+        if t["type"] != "text":
+            continue
+        tb = _drawn_box(t)
+        under = [e for e in source["elements"] if e["type"] != "text" and order[e["id"]] < order[t["id"]]
+                 and not _is_background(e, sw, sh) and _inter(tb, _drawn_box(e)) >= BACKDROP_ON * max(_area(tb), 1e-9)]
+        if under:
+            pairs.append((t["id"], min(under, key=lambda e: _area(_drawn_box(e)))["id"]))
+    return tuple(pairs)
+
+
+def contrast_drops(source, target_canvas, output):
+    """[(text id, source contrast, output contrast)] for texts whose contrast against what lies under
+    them fell below CONTRAST_DROP of the source's and below CONTRAST_OK. Contrast is estimated without
+    rendering: the layers under the text's box (canvas, then every shape and image below it, images
+    sampled from their asset through their fit) are composited at CONTRAST_GRID points, and the text's
+    colour is compared with each (WCAG ratio); the CONTRAST_LOW percentile is its contrast."""
+    src = _text_contrasts(json.dumps(source, sort_keys=True))
+    out = _text_contrasts(json.dumps(output, sort_keys=True))
+    return [(t, src[t], out[t]) for t in src if t in out and out[t] < CONTRAST_DROP * src[t] and out[t] < CONTRAST_OK]
+
+
+def contrast_kept(source, target_canvas, output):
+    """Mean over texts of min(1, output contrast / source contrast), for ranking when every candidate
+    loses some (the worst text alone ties too often: one text at 1:1 in each)."""
+    src = _text_contrasts(json.dumps(source, sort_keys=True))
+    out = _text_contrasts(json.dumps(output, sort_keys=True))
+    kept = [min(1.0, out[t] / src[t]) for t in src if t in out]
+    return sum(kept) / len(kept) if kept else 1.0
+
+
+@lru_cache(maxsize=256)
+def _text_contrasts(design_json):
+    design = json.loads(design_json)
+    els = sorted(enumerate(design["elements"]), key=lambda t: (t[1].get("z_index", 0), t[0]))  # paint order
+    res = {}
+    for n, (_k, t) in enumerate(els):
+        if t["type"] != "text" or t.get("id") in res:
+            continue
+        x0, y0, x1, y1 = _drawn_box(t)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        gx, gy = np.meshgrid(np.linspace(x0, x1, CONTRAST_GRID[0]), np.linspace(y0, y1, CONTRAST_GRID[1]))
+        px, py = gx.ravel(), gy.ravel()
+        col = np.ones((px.size, 3))  # uncovered canvas renders white
+        for _k2, e in els[:n]:
+            if e["type"] == "text" or not _inter((x0, y0, x1, y1), (e["x"], e["y"], e["x"] + e["width"], e["y"] + e["height"])):
+                continue  # shortcut: rotation is ignored here; a tilted panel is sampled as its unrotated box
+            rgb, a = _layer(e, px, py)
+            if rgb is not None:
+                col = col * (1 - a[:, None]) + rgb * a[:, None]
+        r, g, b, a = parse_rgba(t.get("color"))
+        fg = a * np.array([r, g, b]) / 255 + (1 - a) * col
+        lf, lb = _rel_luminance(fg), _rel_luminance(col)
+        res[t["id"]] = float(np.percentile((np.maximum(lf, lb) + 0.05) / (np.minimum(lf, lb) + 0.05), CONTRAST_LOW))
+    return res
+
+
+def _layer(e, px, py):
+    """(rgb 0-1 per point, alpha per point) of one shape or image at canvas points, or (None, None)."""
+    x, y, w, h = e["x"], e["y"], e["width"], e["height"]
+    if w <= 0 or h <= 0:
+        return None, None
+    op = e.get("opacity", 1)
+    if e["type"] == "shape":
+        if e.get("shape_type") == "line":
+            return None, None
+        r, g, b, fa = parse_rgba(e.get("fill_color"), default=(200, 200, 200, 1.0))
+        if e.get("shape_type") == "ellipse":
+            inside = ((px - x - w / 2) / (w / 2)) ** 2 + ((py - y - h / 2) / (h / 2)) ** 2 <= 1
+        else:
+            inside = (px >= x) & (px <= x + w) & (py >= y) & (py <= y + h)
+        return np.tile(np.array([r, g, b]) / 255, (px.size, 1)), inside * fa * op
+    if e["type"] != "image":
+        return None, None
+    img = _asset_rgba(e.get("asset_id"))
+    if img is None:
+        return None, None
+    ih, iw = img.shape[:2]
+    fit = e.get("fit", "contain")
+    if fit in ("contain", "cover"):
+        sx = sy = (min if fit == "contain" else max)(w / iw, h / ih)
+    else:
+        sx, sy = w / iw, h / ih
+    ox, oy = x + (w - iw * sx) / 2, y + (h - ih * sy) / 2
+    cx, cy = np.floor((px - ox) / sx).astype(int), np.floor((py - oy) / sy).astype(int)
+    inside = (cx >= 0) & (cx < iw) & (cy >= 0) & (cy < ih) & (px >= x) & (px <= x + w) & (py >= y) & (py <= y + h)
+    pix = img[np.clip(cy, 0, ih - 1), np.clip(cx, 0, iw - 1)]
+    return pix[:, :3], pix[:, 3] * inside * op
+
+
+@lru_cache(maxsize=128)
+def _asset_rgba(asset_id):
+    """RGBA 0-1 of an asset at most 256 px on its long side (scaled back by the caller's fit), or None."""
+    try:
+        with Image.open(assets_dir() / asset_id) as im:
+            im = im.convert("RGBA")
+            w, h = im.size
+            k = min(1.0, 256 / max(w, h))
+            # the small copy keeps the original's proportions; callers map with its own size
+            return np.asarray(im.resize((max(1, round(w * k)), max(1, round(h * k)))), dtype=np.float32) / 255
+    except (OSError, TypeError):
+        return None
 
 
 def share_drift_penalty(c: Ctx):
