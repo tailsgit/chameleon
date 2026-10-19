@@ -16,6 +16,7 @@ from typing import Any
 
 from engine.analyze import analyze
 from engine.clock import now
+from engine.finish import variants
 from engine.fit import realize
 from engine.recipes import generate
 from engine.select import _passes, fallback, repair, select
@@ -61,6 +62,12 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
         outputs, recipes = _guard(source, target, outputs, recipes)
         if outputs or preferred is not None:
             best = select(source, target, outputs, preferred, deadline)
+            if any(o is best for o in outputs):  # the chosen layout pinned to the corners and/or grown into its free space
+                extra = variants(a, best, target["width"], target["height"])
+                win = select(source, target, [best] + extra, preferred, deadline) if extra else best
+                if any(o is win for o in extra):
+                    outputs, recipes = outputs + [win], recipes + ["finished"]
+                best = win
             log.info("winner: %s", next((r for o, r in zip(outputs, recipes) if o is best),
                                         "uniform" if best is preferred else "repaired"))
             return best

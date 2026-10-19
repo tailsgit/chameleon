@@ -11,6 +11,7 @@ placed afterwards into leftover space by engine.fit.
 Recipes:
   stack    single centred/left column over the whole canvas
   split    hero image in one column (left or right), everything else in the other
+  split_grid  split on a big aspect change (left/right or top/bottom), the rest scaled up to fill its part
   strip    one row for ultra-wide banners: logo | hero | text column | CTA
   overlay  a stack confined to the quietest part of the background image
   compact  stack or strip with only the primary units (headline, CTA, logo, hero) in
@@ -42,6 +43,8 @@ H_GAP = 0.03        # horizontal gap between strip cells, fraction of the canvas
 BISECT_STEPS = 16
 HERO_SHARE = 0.25   # a hero covering this share of the source canvas gets the anchor recipe
 HERO_SIDE_MAX = 0.65  # ...and at most this share of the target's width (or height) in it
+SPLIT_GRID_CHANGE = 1.5  # aspect change from which the split grid is tried...
+SPLIT_GRID_CAP = 1.6     # ...with its column's content allowed this much bigger than the area ratio gives
 COL_ASPECT = 1.5    # a box this much wider than tall may lay its units out in 2 or 3 columns...
 COL_GAIN = 1.15     # ...when one column hits the readable floor and columns raise the scale this much
 log = logging.getLogger(__name__)
@@ -99,6 +102,10 @@ def generate(a, tw, th, deadline=None):
     if has_hero and aspect >= 0.9:
         for side, ratio, align, vjust in product(("left", "right"), (0.4, 0.55), ("center", "left"), ("spread", "center")):
             add(split, "split", side=side, ratio=ratio, align=align, vjust=vjust, cap=1.0)
+    if has_hero and abs(math.log(aspect / (a.sw / a.sh))) >= math.log(SPLIT_GRID_CHANGE):
+        # split grid: on a big shape change the rest (a callout group kept whole) grows to fill its own part
+        for side, ratio in product(("left", "right") if aspect >= 1 else ("top", "bottom"), (0.45, 0.55)):
+            add(split, "split_grid", side=side, ratio=ratio, align="center", vjust="center", cap=SPLIT_GRID_CAP)
     if has_hero and big_hero(a):
         sides = [x for x, ok in (("left", aspect >= 0.8), ("right", aspect >= 0.8), ("top", aspect <= 1.25),
                                  ("bottom", aspect <= 1.25)) if ok]
@@ -135,20 +142,29 @@ def stack(a, sizer, tw, th, align, vjust, img_mult, cap, order, primaries_only=F
 
 
 def split(a, sizer, tw, th, side, ratio, align, vjust, cap):
+    """The hero in one part of the canvas (left/right, or top/bottom on a tall canvas), everything
+    else as a column in the other part."""
     m = margin(tw, th)
     hero = a.by_role("hero")
-    gap = H_GAP * tw
+    across = side in ("left", "right")
+    gap = H_GAP * (tw if across else th)
     bw, bh = tw - 2 * m, th - 2 * m
-    img_w = ratio * (bw - gap)
-    text_w = bw - gap - img_w
-    s = min(img_w / max(hero.w, 1e-6), bh / max(hero.h, 1e-6))
-    img_x0 = m if side == "left" else m + text_w + gap
-    text_x0 = m + img_w + gap if side == "left" else m
-    hero_slot = Slot(hero.id, img_x0 + (img_w - hero.w * s) / 2, m + (bh - hero.h * s) / 2, hero.w * s, hero.h * s, scale=s)
+    img_len = ratio * ((bw if across else bh) - gap)
+    rest_len = (bw if across else bh) - gap - img_len
+    s = min(img_len / max(hero.w, 1e-6), bh / max(hero.h, 1e-6)) if across else min(bw / max(hero.w, 1e-6), img_len / max(hero.h, 1e-6))
+    w, h = hero.w * s, hero.h * s
+    first = side in ("left", "top")  # the hero comes first
+    img0 = m if first else m + rest_len + gap
+    rest0 = m + img_len + gap if first else m
+    if across:
+        hero_slot = Slot(hero.id, img0 + (img_len - w) / 2, m + (bh - h) / 2, w, h, scale=s)
+        box = (rest0, m, rest0 + rest_len, th - m)
+    else:
+        hero_slot = Slot(hero.id, m + (bw - w) / 2, img0 + (img_len - h) / 2, w, h, scale=s)
+        box = (m, rest0, tw - m, rest0 + rest_len)
     rows, floating = flow(a, False)
     rows = [[u for u in r if u != hero.id] for r in rows]
-    slots, k, demoted = solve_column(a, sizer, rows, (text_x0, m, text_x0 + text_w, th - m),
-                                     k_cap(a, tw, th, cap), align, vjust, 1.0)
+    slots, k, demoted = solve_column(a, sizer, rows, box, k_cap(a, tw, th, cap), align, vjust, 1.0)
     return Plan("", {}, [hero_slot] + slots, floating + demoted, k, m)
 
 
