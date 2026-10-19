@@ -24,7 +24,6 @@ Recipes:
 
 import logging
 import math
-import time
 from dataclasses import dataclass, field
 from itertools import combinations, product
 
@@ -32,6 +31,7 @@ import numpy as np
 from PIL import Image
 
 from engine.analyze import PRIMARY_ROLES
+from engine.clock import now
 from engine.fit import Sizer
 from engine.preserve import preserve_plans
 from engine.retrieve import retrieved
@@ -73,7 +73,7 @@ class Plan:
 
 def generate(a, tw, th, deadline=None):
     """All candidate plans for one task: every applicable recipe x its knob grid, then the
-    retrieved layouts. Past `deadline` (time.monotonic()), nothing more is added."""
+    retrieved layouts. Past `deadline` (now()), nothing more is added."""
     sizer = Sizer(a, tw, th)
     hero = a.by_role("hero")
     has_hero = hero is not None and not hero.floating
@@ -82,7 +82,7 @@ def generate(a, tw, th, deadline=None):
     plans, cut = [], []
 
     def add(fn, name, **knobs):
-        if plans and deadline is not None and time.monotonic() > deadline:
+        if plans and deadline is not None and now() > deadline:
             if not cut:
                 log.info("time budget reached after %d plans", len(plans))
                 cut.append(name)

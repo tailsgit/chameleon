@@ -17,9 +17,9 @@ import copy
 import json
 import logging
 import math
-import time
 
 from engine.analyze import full_box
+from engine.clock import now
 from eval.check import check, text_layout
 from eval.score import SHARE_FLOOR, busy_text_over_image, contrast_drops, contrast_kept, contrast_worst, large_share_kept, score, text_off_backdrop
 
@@ -45,7 +45,7 @@ def select(source, target, outputs, preferred=None, deadline=None):
         best, rendered = top[0][0], []
         try:
             for o, _s in top:  # best geometric first; past the deadline, only what is already rendered counts
-                if deadline is not None and time.monotonic() > deadline:
+                if deadline is not None and now() > deadline:
                     log.info("time budget reached after %d contrast renders", len(rendered))
                     break
                 rendered.append((score(source, target, o, contrast=True)["total"] + bonus(o), o))

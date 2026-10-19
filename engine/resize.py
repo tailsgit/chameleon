@@ -12,10 +12,10 @@ headline or main image much less of the canvas than the best recipe layout does.
 
 import copy
 import logging
-import time
 from typing import Any
 
 from engine.analyze import analyze
+from engine.clock import now
 from engine.fit import realize
 from engine.recipes import generate
 from engine.select import _passes, fallback, repair, select
@@ -32,13 +32,13 @@ log = logging.getLogger(__name__)
 
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
     target = {"width": int(target_canvas["width"]), "height": int(target_canvas["height"])}
-    start = time.monotonic()
+    start = now()
     deadline = start + BUDGET_S
     try:
         a = analyze(source)
         outputs, recipes, per = [], [], 0.0
         for plan in generate(a, target["width"], target["height"], start + GEN_SHARE * BUDGET_S):
-            if outputs and time.monotonic() + SELECT_COST * per * len(outputs) > deadline:
+            if outputs and now() + SELECT_COST * per * len(outputs) > deadline:
                 log.info("time budget reached after %d candidates", len(outputs))
                 break
             # stand-out floating units: centred in their free space, or near their source side; the scorer picks
@@ -49,9 +49,9 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                     outputs.append(realize(a, plan, target["width"], target["height"], focal=f, keep_on_panel=k))
                     recipes.append(plan.recipe)
                     if len(outputs) <= 2:  # what judging one candidate costs on this machine (the second: the first warms the source's caches)
-                        t = time.monotonic()
+                        t = now()
                         _passes(source, target, outputs[-1]) and score(source, target, outputs[-1])
-                        per = time.monotonic() - t
+                        per = now() - t
                 except Exception:
                     log.exception("recipe %s %s failed", plan.recipe, plan.knobs)
         preferred = None

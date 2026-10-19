@@ -284,6 +284,7 @@ if __name__ == "__main__":
                     help="quick = crello-quick (about 100 dev cases) then the samples: the suite to iterate on")
     ap.add_argument("--jobs", type=int, default=1, help="worker processes (timings then include contention)")
     args = ap.parse_args()
+    os.environ["CHAMELEON_CPU_CLOCK"] = "1"  # budget in CPU time: parallel cases are not cut short by the load (engine.clock)
     for suite in (("crello-quick", "samples") if args.suite == "quick" else (args.suite,)):
         t = time.perf_counter()
         run(suite=suite, render=args.render, contrast=args.contrast, jobs=args.jobs)
