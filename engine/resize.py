@@ -22,7 +22,8 @@ from engine.select import _passes, fallback, repair, select
 from eval.score import _area, _drawn_box, key_elements, score
 
 SAME_ASPECT = 0.02  # relative aspect-ratio change below which the source layout is kept as is
-BUDGET_S = 15.0     # seconds per case: then no new candidates, the best so far is chosen
+BUDGET_S = 13.5     # seconds per case: then no new candidates, the best so far is chosen (the selection
+                    # already under way still finishes; this leaves it room to end within 15 s under emulation)
 GUARD = 0.7         # a retrieved layout must give the headline and main image at least this share of the best recipe's
 log = logging.getLogger(__name__)
 
