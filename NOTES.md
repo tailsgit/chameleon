@@ -909,3 +909,63 @@ The scorer and the selection it drives now share the same blind spots. So the me
 All three conditions hold: dev and holdout beat v1 in both modes, and the retrieval-on review shows clearly more better than worse. `retrieval` is merged into main and tagged **v2**, with retrieval on by default. `CHAMELEON_RETRIEVAL=0` gives recipes only.
 
 The organisers still haven't confirmed that shipping a geometry-only library derived from Crello is fine (assumption 3, §8).
+
+## 24. Preserve-first candidates, share drift (branch `preserve`, merged as v3)
+
+### Labels on the 30 structure cases (§23)
+- **Verdicts:** 27 bad, 2 okay, 1 good.
+- **Agreement:** the scorer agrees pairwise 0.807 (AUC 1.0: the good case scored highest), but it rated most of the bad cases 80-90.
+- **All 135 labels:** 0.863.
+
+### What was built (from main v2; structure's `relations()`, relationships penalty and structure suite brought over, its block tree in the recipes not)
+- **`engine/preserve.py`:** CP-SAT, single-threaded, fixed seed, 0.5 deterministic seconds per variant.
+  - Items: units joined by strength-1 relations (at most 60% of the canvas).
+  - Variables: x, y and a scale per item. Width and height follow the scale exactly.
+  - Hard constraints: inside the canvas; readable text; a large item (10% of the source or more) keeps at least 0.7 of its share-keeping scale; no new overlap between items that didn't overlap in the source (4-way disjunction).
+  - Objective: share-weighted |move| + |resize| (shrinking costs 3x), plus penalties for a changed left/right or above/below order and for broken shared edges.
+  - Variants: share, fit, edges, between.
+  - Dependency: `ortools==9.12.4544`, chosen over scipy for its native disjunctions and deterministic limits. The image is 331 MB (+27 MB).
+- **Share drift (`eval.score`):** each element's canvas share against the share it can keep (its source share; less for an image whose aspect can't fill that much of the target). Weighted by source share. **Shrinking only:** penalising growth as well agreed less with the labels (pooled 0.849 vs 0.867), which favour an enlarged headline or product.
+- **Large-share floor:** select drops candidates that leave an element of 10% or more of the source with under half the share it can keep, unless every candidate does.
+- **Weights** (all 135 labels): share_drift 1.0, relationships 0.5.
+  - Pooled agreement 0.864 -> 0.867; crello-dev 0.876 -> 0.938.
+  - Costs: samples 0.820 -> 0.805, structure labels 0.807 -> 0.783 (calibration test threshold 0.79).
+- **Budget:** 14.5 s in all, in three stages.
+  - Generation stops at half of it.
+  - Realising stops while the rest still covers judging every candidate made (4x the measured per-candidate check+score).
+  - Contrast renders stop at the deadline.
+  - Why: with a plain 13.5 s generation budget, one Docker case still took 16.4 s, because judging 100 candidates under emulation took 3.6 s.
+
+### Results (v2 outputs rescored with the current scorer; final code fd055f9)
+
+| | v2 | v3 |
+|---|---|---|
+| crello-dev score | 88.74 | **89.24** (232 better, 73 worse) |
+| crello-holdout score (once) | 88.60 | **89.20** (102 better, 24 worse) |
+| structure suite score | 83.80 | 82.49 (34 better, 29 worse) |
+| relationships kept dev / holdout / structure | 40.7% / 42.2% / 50.3% | **59.7% / 53.5% / 62.2%** |
+| largest element's share ratio (median) dev / holdout / structure | 0.80 / 0.81 / 0.71 | **0.84 / 0.86 / 0.79** |
+| largest element under half its share, dev / holdout | 151 / 68 cases | 131 / 58 |
+| samples | 45/45, 96.85 | 45/45, 97.21 |
+| synthetic | 299/300 | 299/300 |
+| Docker 45 samples | | 278 s, median 5.3 s, max 12.8 s, none over 15 s |
+
+- Pass counts are unchanged (592/600, 295/300, 118/120).
+- **Native runtime** (8 workers sharing the CPU): dev median 6.3 s, max 16.3 s.
+- **Winners by aspect change** (dev, |ln aspect ratio| buckets):
+
+| aspect change | cases | preserve | retrieved | recipes | uniform | repaired |
+|---|---|---|---|---|---|---|
+| same (< 0.1) | 48 | 12 | 7 | 11 | 18 | 0 |
+| moderate (0.1-0.5) | 161 | 61 | 38 | 59 | 0 | 3 |
+| large (0.5-1.2) | 243 | 57 | 74 | 110 | 0 | 2 |
+| extreme (> 1.2) | 148 | 12 | 52 | 76 | 0 | 8 |
+
+  Holdout has the same pattern: preserve wins 26 of 78 moderate changes and 7 of 91 extreme ones.
+- **By eye** (30 most changed vs v2, `eval/results/crello-review-preserve`): about 15 better, 6 worse.
+  - Better: Save 10%, Pharmacy, Health Matters, Ocean x3, Office, Apartment x2, Fashion Talks, Family festival, Menu, Bowling.
+  - Worse: storyboard, Capsule wardrobe, Marmillon, Warme Dusche, South American birds, Howard Love.
+- **Not fixed:** white text half off its dark backdrop (South American birds, Summer coffee). Both come from recipe or retrieved winners and also happen in v2. Next: reject a candidate when a text that sat fully on an element now sits mostly off it.
+
+### Decision
+Dev and holdout both beat v2, and by eye it is clearly better: merged into main and tagged **v3**.

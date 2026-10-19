@@ -1,6 +1,6 @@
 # Benchmark summary: samples
 
-Engine commit `v2-2-gc68ee0e-dirty`, 45 cases (3 designs), render=no, contrast=no, jobs=1.
+Engine commit `v2-3-gfd055f9-dirty`, 45 cases (3 designs), render=no, contrast=no, jobs=1.
 
 - **Cases passing every hard rule: 45/45** (100.0%)
 - **Average score: 97.21** / 100
@@ -42,7 +42,7 @@ Engine commit `v2-2-gc68ee0e-dirty`, 45 cases (3 designs), render=no, contrast=n
 
 ## Timings (per case, this machine)
 
-- resize: mean 3126 ms, median 2691 ms, p95 6046 ms, max 7984 ms
-- check: mean 2 ms, median 1 ms, p95 3 ms, max 3 ms
-- score: mean 2 ms, median 1 ms, p95 4 ms, max 6 ms
+- resize: mean 2955 ms, median 2561 ms, p95 5649 ms, max 7650 ms
+- check: mean 1 ms, median 1 ms, p95 2 ms, max 3 ms
+- score: mean 2 ms, median 1 ms, p95 4 ms, max 5 ms
 - render: n/a
