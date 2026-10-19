@@ -1080,3 +1080,35 @@ Not merged: dev and holdout drop. Next: a cheap contrast penalty in the default 
    - It changes 8 of 600 dev scores (extreme bucket 87.76 -> 87.99) and none of the 10 worst. Quick-suite outputs are unchanged apart from noise.
    - The layout library shows why: real designs give the headline about the same share at every aspect ratio (median 7.5% on squares, 13% at 8:1). So the headline penalty on banners is mostly deserved; the shrinking comes from rigid groups and competing content, not from the canvas shape.
 4. **Text-heavy documents:** skipped, as asked.
+
+## 28. v4: canvas coverage, backgrounds, panels, narrowed backdrop rule (merged, tagged v4)
+
+- **Labels:** all 185 (153 earlier + 17 legibility + 15 subject experiment). Pooled agreement with the weights in PENALTIES: 0.844 before this round; refitting doesn't improve it. With the coverage penalty: 0.866.
+- **Coverage penalty** (`eval/score.py`, `coverage`, weight 3.0 pinned like text_over_image):
+  - Share of the canvas painted at least half opaque by shapes and images, on a 48x48 grid (texts don't cover; rotation ignored).
+  - Applies only when the source is at least 90% covered: newly bare canvas costs, 15% of the target = full penalty.
+  - In v3's dev outputs, 46 of the 441 (nearly) full-bleed cases leave bare canvas, some keeping only 15-50% covered.
+- **Near-full-bleed photos and colour tiles as backgrounds** (`engine/analyze._background`, `engine/fit.place_background`):
+  - A cover photo or opaque rectangle covering at least 95% of the canvas fills the target.
+  - Opaque rectangles and cover photos of at least 10% each, that together cover at least 95%, form a background layer: each is stretched with the canvas.
+  - **Limit:** the brief keeps a non-cover image's proportions, and our Crello converter makes every image that doesn't fill the canvas `contain`. Of dev's 94 canvas-spanning tiles, 91 are contain images (Feed Your Kitten's panels among them), so they can't stretch. The organiser samples have no tiles at all. Changing the converter (cover for flat panels) would change the test set and invalidate every snapshot; not done.
+- **Panels keep their text** (`engine/fit.place_panel`):
+  - When a panel can't grow enough to hold its content (canvas edge, fixed proportions), the content shrinks onto it, by at most 0.6x, as an extra candidate beside the overhanging one (Truman Robotics).
+  - **Bug fixed:** decoration lines on a panel were still at source coordinates when the panel was fitted, which skewed its box.
+- **Backdrop rule narrowed** (`engine/select._safest`): a candidate is rejected only when the same text ends up mostly off its card, label or panel **and** loses its contrast.
+- **Small label bars hold their text** (`engine/analyze._holder`): an image bar under 5% of the canvas holds its text even when longer than 4:1 (Best value's rotated "PREMIUM FURNITURE" on a gold bar).
+- **Merged branches:** `contrast` (legibility in the score, best worst-case contrast fallback, warm judging cost) and `extreme` (fair key_size). `subject-experiment` is dropped (see §27).
+- **Gate** (against the v3 snapshot, same scorer; noise floor about 0.3):
+
+| Suite | v3 | v4 | Better / worse |
+|---|---|---|---|
+| quick | 91.56 | 91.63 | 19 / 3 |
+| dev | 90.43 | 90.41 | 86 / 57 |
+| structure | 84.76 | 85.20 | 19 / 15 |
+| holdout | 90.53 | 90.45 | 43 / 29 |
+
+  - Pass counts are unchanged (592/600, 118/120, 295/300).
+  - Docker (amd64 emulated, `--network none`): 45/45 pass natively, average 97.65, median 5.9 s, slowest 11.8 s.
+- **Labels:** of the 13 legibility outputs labelled bad, v4 moves away from 12. Of the 4 labelled good, it keeps 2 unchanged.
+- **By eye** (`eval/results/crello-review-v4`, the 30 dev cases that changed most): about 12 better (Lumos, Paris x3, Offer, Valentine, Best value, Birds, Coffee) and about 9 worse. Rerun alone, every worse case scores at or within 2 points of v3 (e.g. Howard Love 83.3 vs 83.2, Warme Dusche 94.2 = v3): the full run's big drops come from the time budget under 8-worker load.
+- **Still weak:** Norma Wanns (v3's white text is invisible off its bar; v4's is legible but small), CVs and invoices in banners.
