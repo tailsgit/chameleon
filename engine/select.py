@@ -74,11 +74,7 @@ def _safest(source, target, passing):
     remains (then by the contrast kept on average, then the score)."""
     if not passing:
         return passing
-    tiers = []
-    for o, s in passing:
-        off = {t for t, _b, _s in text_off_backdrop(source, target, o)}
-        legible = not off or not off & {t for t, _s, _o in contrast_drops(source, target, o)}
-        tiers.append(((legible, not busy_text_over_image(source, target, o), large_share_kept(source, target, o) >= SHARE_FLOOR), o, s))
+    tiers = [(_tier(source, target, o), o, s) for o, s in passing]
     best = max(t for t, _o, _s in tiers)
     kept = [(o, s) for t, o, s in tiers if t == best]
     if not best[0]:  # nothing is legible everywhere: the best worst-case contrast wins, whatever else scores
@@ -92,6 +88,24 @@ def _safest(source, target, passing):
         if n:
             log.info("rejected %d candidates with %s", n, name)
     return kept
+
+
+def _tier(source, target, o):
+    """(legible, no text newly on a busy image, large elements keep their share): see _safest."""
+    off = {t for t, _b, _s in text_off_backdrop(source, target, o)}
+    legible = not off or not off & {t for t, _s, _o in contrast_drops(source, target, o)}
+    return legible, not busy_text_over_image(source, target, o), large_share_kept(source, target, o) >= SHARE_FLOOR
+
+
+def better_variant(source, target, best, extra):
+    """The variant (engine.finish) to use instead of the chosen layout, else the chosen layout: it must pass
+    check(), be in no worse a tier (_tier) and score higher. A safer tier alone doesn't win here: the chosen
+    layout already won its tier against every candidate."""
+    tb, sb = _tier(source, target, best), score(source, target, best)["total"]
+    ok = [(score(source, target, v)["total"], k, v) for k, v in enumerate(extra)
+          if _passes(source, target, v) and _tier(source, target, v) >= tb]
+    s, _k, v = max(ok, default=(sb, 0, best))
+    return v if s > sb else best
 
 
 def _passes(source, target, output):

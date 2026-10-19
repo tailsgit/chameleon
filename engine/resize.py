@@ -19,7 +19,7 @@ from engine.clock import now
 from engine.finish import variants
 from engine.fit import realize
 from engine.recipes import generate
-from engine.select import _passes, fallback, repair, select
+from engine.select import _passes, better_variant, fallback, repair, select
 from eval.score import _area, _drawn_box, key_elements, score
 
 SAME_ASPECT = 0.02  # relative aspect-ratio change below which the source layout is kept as is
@@ -64,7 +64,7 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
             best = select(source, target, outputs, preferred, deadline)
             if any(o is best for o in outputs):  # the chosen layout pinned to the corners and/or grown into its free space
                 extra = variants(a, best, target["width"], target["height"])
-                win = select(source, target, [best] + extra, preferred, deadline) if extra else best
+                win = better_variant(source, target, best, extra)
                 if any(o is win for o in extra):
                     outputs, recipes = outputs + [win], recipes + ["finished"]
                 best = win

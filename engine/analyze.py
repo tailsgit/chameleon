@@ -55,7 +55,7 @@ DECORATION_ALPHA = 0.5  # same threshold as eval.score
 EMPHASIS_BOOST = 0.15
 CARD_MAX_AREA = 0.5     # ...and up to this share of the canvas when it is flat (a card, not a photo)
 FLAT_STD = 25.0         # an image whose opaque pixels vary less than this (RGB std) is flat
-TEXT_ON_HOLDER = 0.6   # text this much on a card, blob or button drawn under it belongs to it (a tilted headline
+TEXT_ON_HOLDER = 0.8   # text this much on a card, blob or button drawn under it belongs to it (a tilted headline
                        # on a brushstroke pokes out); other elements need 0.9
 LABEL_MAX_AREA = 0.05  # ...unless it is smaller than this share of the canvas
 CARD_MAX_ASPECT = 4.0   # an image holds text as a card only when at most this elongated
