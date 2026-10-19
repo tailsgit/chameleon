@@ -24,6 +24,9 @@ Conversion
   box's aspect ratio, so it draws exactly as in Crello). Fit "cover" when it fills
   the canvas (a background may be cropped), else "contain", like the samples' logos
   and products: the checker then holds its aspect ratio.
+- A crop that is one flat colour over its whole box (opaque or evenly translucent; colour std under
+  FLAT_STD) becomes a rectangle shape of that colour, as an Adobe design would draw a colour panel.
+  Photos, textures, gradients and shaped cut-outs stay images. Counted in meta.flat_to_shape.
 - Rotations within 0.5 degrees of a multiple of 90 are editor noise and snap to it
   (0.01 -> 0, 89.9 -> 90).
 - An unrotated image that bleeds off the canvas is cut to the visible part (its
@@ -109,7 +112,7 @@ def family(crello_font):
 def convert(row, fonts, formats):
     """One parquet row -> (design, meta, {asset_id: PIL image}). Raises on anything unconvertible."""
     cw, ch = int(row["canvas_width"]), int(row["canvas_height"])
-    els, images, used, dropped, refit = [], {}, Counter(), Counter(), []
+    els, images, used, dropped, refit, flat = [], {}, Counter(), Counter(), [], Counter()
     for i in range(row["length"]):
         kind = TYPES[row["type"][i]]
         x, y, w, h = (float(row[k][i]) for k in ("left", "top", "width", "height"))
@@ -156,6 +159,12 @@ def convert(row, fonts, formats):
                     dropped["off_canvas_or_empty"] += 1
                     continue
                 el.update(x=box[0], y=box[1], width=box[2], height=box[3])
+            fill = _flat_fill(img)
+            if fill:  # a flat colour panel: a designer's rectangle, free to stretch
+                el.update(type="shape", shape_type="rectangle", fill_color=fill)
+                flat[kind] += 1
+                els.append(el)
+                continue
             asset_id = f"crello_{row['id']}_{i}.png"
             images[asset_id] = img
             from eval.check import rotated_bbox
@@ -165,7 +174,7 @@ def convert(row, fonts, formats):
         els.append(el)
     design = {"canvas": {"width": cw, "height": ch}, "elements": els}
     meta = {"id": row["id"], "format": formats[row["format"]], "elements": len(els), "aspect": round(cw / ch, 4),
-            "fonts": dict(used), "dropped": dict(dropped), "font_refit": refit}
+            "fonts": dict(used), "dropped": dict(dropped), "font_refit": refit, "flat_to_shape": dict(flat)}
     return design, meta, images
 
 
@@ -183,6 +192,25 @@ def _fit_font(el, lines, floor=0.5):
         f -= 0.02
         el["font_size"] = max(1.0, round(fs0 * f, 2))
     return el["font_size"] / fs0
+
+
+FLAT_STD = 4.0        # RGB std (0-255) under which a crop is one flat colour
+FLAT_COVER = 0.98     # ...and at least this share of its pixels carry the same alpha (a full rectangle)
+
+
+def _flat_fill(img):
+    """'rgba(r,g,b,a)' when the crop is a rectangle of one colour (opaque or evenly translucent), else None.
+    Photos, textures, gradients and shaped cut-outs (circles, blobs, rounded cards) stay images."""
+    import numpy as np
+    px = np.asarray(img.resize((min(64, img.width), min(64, img.height))), dtype=float).reshape(-1, 4)
+    a = px[:, 3]
+    if a.max() < 8 or np.mean(np.abs(a - np.median(a)) <= 8) < FLAT_COVER:
+        return None
+    rgb = px[a >= 8, :3]
+    if rgb.std(axis=0).max() > FLAT_STD:
+        return None
+    r, g, b = (int(round(v)) for v in rgb.mean(axis=0))
+    return f"rgba({r},{g},{b},{round(float(np.median(a)) / 255, 3)})"
 
 
 def _rgba(c):
@@ -279,23 +307,27 @@ def run(compare=0):
                              "median_factor": sorted(refits)[len(refits) // 2] if refits else 1.0,
                              "at_floor": sum(f <= 0.51 for f in refits)},
               "dropped_elements": dict(sum((Counter(m["dropped"]) for m in kept), Counter())),
+              "flat_to_shape": {"elements": dict(sum((Counter(m["flat_to_shape"]) for m in kept), Counter())),
+                                "designs": sum(bool(m["flat_to_shape"]) for m in kept)},
               "formats": dict(Counter(m["format"] for m in kept).most_common()),
               "fonts_used": {f: {"elements": n, "mapped_to": family(f)} for f, n in fonts_used.most_common()}}
     (OUT / "report.json").write_text(json.dumps(report, indent=1))
-    print(json.dumps({k: report[k] for k in ("converted", "skipped_total", "skipped", "dropped_elements", "font_refit")}, indent=1))
+    print(json.dumps({k: report[k] for k in ("converted", "skipped_total", "skipped", "dropped_elements", "font_refit", "flat_to_shape")}, indent=1))
     if compare:
         compare_sheet(kept, compare)
     return report
 
 
 def compare_sheet(kept, n, seed=0):
-    """Our render of n converted designs next to Crello's preview, one PNG each plus a sheet."""
+    """Our render of n converted designs next to Crello's preview, one PNG each plus a sheet.
+    Designs with flat panels turned into shapes come first: they are the ones the conversion changes most."""
     import random
     os.environ["CHAMELEON_ASSETS"] = str(OUT / "assets")
     from eval.render import render_image
     (OUT / "compare").mkdir(exist_ok=True)
     pairs = []
-    for m in random.Random(seed).sample(kept, min(n, len(kept))):
+    flat = [m for m in kept if m["flat_to_shape"]]
+    for m in random.Random(seed).sample(flat if len(flat) >= n else kept, min(n, len(kept))):
         design = json.loads((OUT / "designs" / f"{m['id']}.json").read_text())["source"]
         ours = render_image(design)
         theirs = Image.open(OUT / "previews" / f"{m['id']}.png").convert("RGB")
