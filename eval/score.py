@@ -78,6 +78,7 @@ BUSY = 0.02                  # ...whose pixels under it vary this much (mean |gr
                              # (text designers put on images: median 0.000, 75th percentile 0.008; the headline
                              # retrieval put on bamboo 0.035, on a photo 0.057)
 KEY_FREE, KEY_FULL = 0.85, 0.5  # headline/main image at this share of the scale the target affords: no / full penalty
+HEADLINE_WRAPS = tuple(1 - 0.05 * i for i in range(17))  # widths tried, as shares of the one-line width
 KEY_SQUEEZE_FREE, KEY_SQUEEZE_FULL = 0.6, 0.25  # a cropped main photo's box aspect vs the source's (smaller/larger)
 HERO_MIN_AREA = 0.05         # the largest foreground image is the hero when it covers this share of the source
 HOLDER_MAX_AREA = 0.5       # a card/bubble/label/button holding text covers less than this share of the canvas
@@ -665,7 +666,7 @@ def key_size_penalty(c: Ctx):
     biggest-looking text) and the main image (the largest non-background image, alone or
     inside a group). Each one's output scale (square root of its drawn area ratio) over the
     scale the target affords it (the area ratio's square root, or less when an image at its
-    own aspect cannot fit that). KEY_FREE or more is free, KEY_FULL or less costs 1, steeply
+    own aspect cannot fit that, or less when the headline re-wrapped at its best cannot). KEY_FREE or more is free, KEY_FULL or less costs 1, steeply
     in between. A cover-cropped main image whose box was cut to a sliver (aspect changed by
     more than KEY_SQUEEZE_FREE) costs too. Penalty = the worst of these: either one
     shrinking is a failure, and decorations are not measured at all."""
@@ -673,7 +674,8 @@ def key_size_penalty(c: Ctx):
     pens = []
     h, m = key_elements(c.source)
     if h is not None and h in c.out:
-        r = math.sqrt(_area(c.out_box[h]) / max(_area(c.src_box[h]), 1e-9)) / area  # text re-wraps: any shape fits
+        best = min(area, _headline_fit(json.dumps(c.src[h], sort_keys=True), c.tw, c.th))
+        r = math.sqrt(_area(c.out_box[h]) / max(_area(c.src_box[h]), 1e-9)) / best
         pens.append((_steep(KEY_FREE, KEY_FULL, r), f"headline {h} at {r:.2f} of its share"))
     if m is not None and m in c.out:
         sb, ob = c.src_box[m], c.out_box[m]
@@ -685,6 +687,22 @@ def key_size_penalty(c: Ctx):
         pens.append((_steep(KEY_SQUEEZE_FREE, KEY_SQUEEZE_FULL, q), f"main image {m} squeezed to {q:.2f} of its aspect"))
     worst = max(pens, default=(0.0, ""))
     return worst[0], worst[1] if worst[0] > 0 else ""
+
+
+@lru_cache(maxsize=256)
+def _headline_fit(el_json, tw, th):
+    """The largest scale at which a text, re-wrapped at its best width, still fits the canvas: what the
+    target's shape lets it keep, when that is less than its share of the area (a long headline on a
+    skyscraper). Line breaks tried at HEADLINE_WRAPS widths, from one line down to a fifth of it."""
+    el = json.loads(el_json)
+    one = text_layout(dict(el, width=1e6))
+    full = one["right"] - one["left"]
+    best = 0.0
+    for f in HEADLINE_WRAPS:
+        lay = text_layout(dict(el, width=max(1.0, full * f)))
+        w = max(lay["right"] - lay["left"], 1.0) if lay["lines"] else 1.0
+        best = max(best, min(tw / w, th / max(lay["height"], 1.0)))
+    return best
 
 
 def key_elements(source):

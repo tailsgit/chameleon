@@ -1044,3 +1044,39 @@ Not merged: dev and holdout drop. Next: a cheap contrast penalty in the default 
   3. **Text-heavy documents into banners:** CVs and the invoice. Columns, tables and panels are torn apart or crushed, and body text drops to the minimum. These have more text than a 728x90 strip can hold readably, and nothing may be removed.
   4. **The scorer may be harsh:** Dessert and Ocean look reasonable but score about 70. key_size measures the headline by area share, which a headline can't keep on a 3:1 or 8:1 strip, so part of that penalty is unavoidable there.
 - **Failures:** 6 of the 8 dev failures are in this bucket, all hidden hairlines (as before).
+
+## 27. Legibility round 2 and extreme shape changes (branches `contrast`, `extreme`, `subject-experiment`; nothing merged)
+
+**Legibility (branch `contrast`, after §26 there).**
+- The no-render contrast estimate is in the default score as `legibility` (weight 2.0). On all 153 labels, pooled agreement is 0.866 with it off and 0.869 at 2.0, the best of 0.5-4. The fit leaves it at the floor, because few labelled outputs lose contrast. It correlates 0.99 with the render-based `contrast`.
+- When no candidate is legible, the winner is the one whose worst text kept the most of its contrast (then the mean contrast kept, then the score).
+- Judging cost is now measured on the second candidate. The first one pays the source's cold caches and overestimated the cost about 5x, which ended generation early.
+- Full runs against v3, both under the new scorer:
+
+| Suite | v3 | Legibility round 2 |
+|---|---|---|
+| dev | 89.96 | 88.99 |
+| holdout | 89.89 | 88.93 |
+| structure | 83.91 | 82.73 |
+
+- Merge gate failed; v4 not tagged.
+- On the 17 quick cases the rules changed (`eval/results/crello-review-legibility`), by eye about 11 look better and 3 worse (both Best value cases, Start of tournament). The scorer calls most of them worse: forced candidates pay in image size and share.
+
+**Extreme shape changes (3x or more), branch `extreme`.**
+1. **Reflow of rigid groups: not built.** In crello-dev's extreme bucket, all 71 rigid groups of the wrong shape for the canvas are content on one holder: a card, tag or diamond, always a contain SVG with fixed proportions. Reflowing their members along the long axis would take the text off its holder, which §26's rule 1 rejects. There are no free groups to reflow.
+2. **Saliency-kept crops: built, worse by eye, parked on `subject-experiment`.**
+   - What was built:
+     - `eval/saliency.py`: colour contrast + detail + 2x skin, sharpened; the subject is the central 80% of its mass, or none when that covers over half the image.
+     - A `subject` recipe: the photo in the least extreme box that keeps the subject, at one end, with a stack beside it.
+     - Select rejects candidates that crop a subject off.
+     - The checker's full-canvas background rule (our assumption, §11) is relaxed for that box.
+   - Almost all cover crops in the bucket are backgrounds (89 of 92). Off-canvas boxes are not allowed, so keeping the subject means a photo smaller than the canvas, and the rest of a long canvas is bare white.
+   - The recipe is skipped when free text is light, since it would sit on white. That leaves 17 dev cases, of which 15 switch.
+   - By eye: the Tokyo cards are fine. The Design Proposal cases are broken: white text inside a group ends up on white. Denim Fest, the waterfall and Eco are worse. Scores drop on 12 of 15.
+   - See `eval/results/crello-review-extreme` (middle column v3, right the experiment).
+   - **Dropped** (branch kept, not merged): shrinking photos to protect their subject left white space where the source had none, and the hand labels preferred v3 in all but one of the 15 cases. Lesson: a full canvas beats a perfect crop.
+3. **Fair key_size: on `extreme`.**
+   - A headline is measured against `min(area share, the largest scale at which it re-wrapped at its best still fits the canvas)`.
+   - It changes 8 of 600 dev scores (extreme bucket 87.76 -> 87.99) and none of the 10 worst. Quick-suite outputs are unchanged apart from noise.
+   - The layout library shows why: real designs give the headline about the same share at every aspect ratio (median 7.5% on squares, 13% at 8:1). So the headline penalty on banners is mostly deserved; the shrinking comes from rigid groups and competing content, not from the canvas shape.
+4. **Text-heavy documents:** skipped, as asked.
