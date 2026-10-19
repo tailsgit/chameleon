@@ -15,6 +15,8 @@ Recipes:
   overlay  a stack confined to the quietest part of the background image
   compact  stack or strip with only the primary units (headline, CTA, logo, hero) in
            flow; everything else floats into leftover space. For tiny canvases.
+  subject  a background photo whose subject a centre crop at the canvas's shape would cut off, in
+           the least extreme box that keeps it at one end; everything else stacked beside it
   anchor   a big hero (>= 25% of the design) keeps its share of the canvas, flush against
            one edge; everything else is a column in the space left (text fits around the
            photo instead of both shrinking together).
@@ -35,7 +37,10 @@ from engine.analyze import PRIMARY_ROLES
 from engine.fit import Sizer
 from engine.preserve import preserve_plans
 from engine.retrieve import retrieved
+from eval.saliency import aspect_range, salient_box
 from eval.render import assets_dir
+from eval.score import CONTRAST_MIN_LARGE, _rel_luminance
+from renderer.converter.colorutil import parse_rgba
 
 GAP = 0.03          # vertical gap between rows, fraction of the column's shorter side
 H_GAP = 0.03        # horizontal gap between strip cells, fraction of the canvas width
@@ -44,6 +49,7 @@ HERO_SHARE = 0.25   # a hero covering this share of the source canvas gets the a
 HERO_SIDE_MAX = 0.65  # ...and at most this share of the target's width (or height) in it
 COL_ASPECT = 1.5    # a box this much wider than tall may lay its units out in 2 or 3 columns...
 COL_GAIN = 1.15     # ...when one column hits the readable floor and columns raise the scale this much
+SUBJECT_REST = 0.25  # the subject recipe needs at least this share of the canvas beside the photo
 log = logging.getLogger(__name__)
 
 
@@ -110,6 +116,10 @@ def generate(a, tw, th, deadline=None):
     for region in quiet_regions(a, tw, th)[:2]:
         for align in ("center", "left"):
             add(stack, "overlay", align=align, vjust="center", img_mult=1.0, cap=1.0, order="source", region=region)
+    bg = subject_boxes(a, tw, th)
+    if bg:
+        for align, cap in product(("center", "left"), (0.9, 1.2)):
+            add(subject, "subject", bg=bg, align=align, cap=cap)
     if tiny:
         for align, cap in product(("center", "left"), (0.9, 1.2)):
             if aspect >= 2.0:
@@ -150,6 +160,58 @@ def split(a, sizer, tw, th, side, ratio, align, vjust, cap):
     slots, k, demoted = solve_column(a, sizer, rows, (text_x0, m, text_x0 + text_w, th - m),
                                      k_cap(a, tw, th, cap), align, vjust, 1.0)
     return Plan("", {}, [hero_slot] + slots, floating + demoted, k, m)
+
+
+def subject(a, sizer, tw, th, bg, align, cap):
+    """The background photo in `bg`'s box at one end (engine.fit.realize places it there), and a
+    stack in the rest of the canvas."""
+    m = margin(tw, th)
+    x, y, w, h = next(iter(bg.values()))
+    if h >= th - 0.5:  # the photo spans the height, at the left or right end
+        region = (x + w + m, m, tw - m, th - m) if x == 0 else (m, m, x - m, th - m)
+    else:
+        region = (m, y + h + m, tw - m, th - m) if y == 0 else (m, m, tw - m, y - m)
+    if (region[2] - region[0]) * (region[3] - region[1]) < SUBJECT_REST * tw * th:
+        return None
+    return stack(a, sizer, tw, th, align, "center", 1.0, cap, "source", region=region)
+
+
+def subject_boxes(a, tw, th):
+    """{background id: (x, y, w, h)} for a cover photo whose centre crop at the canvas's shape would cut
+    off the subject its source crop shows (eval.saliency): the least extreme box shape that keeps it,
+    across the canvas's short side, at the end nearer the subject."""
+    out = {}
+    if not _legible_beside(a):
+        return out
+    for b in a.background:
+        e = a.els[b]
+        r = aspect_range(e)
+        if r is None or not r[0] <= e["width"] / e["height"] <= r[1] or r[0] <= tw / th <= r[1]:
+            continue
+        x0, y0, x1, y1 = salient_box(e["asset_id"])
+        if tw / th > r[1]:
+            w = th * r[1]
+            out[b] = (0.0 if x0 + x1 < 1 else tw - w, 0.0, w, float(th))
+        else:
+            h = tw / r[0]
+            out[b] = (0.0, 0.0 if y0 + y1 < 1 else th - h, float(tw), h)
+        break  # one photo per design: the layout goes beside it
+    return out
+
+
+def _legible_beside(a):
+    """Every free text stays readable (WCAG CONTRAST_MIN_LARGE) on what the canvas shows beside the
+    photo: the lowest background shape's fill, else white. White text that sat on the photo is not."""
+    fill = next((a.els[b]["fill_color"] for b in a.background if a.els[b]["type"] == "shape"), None)
+    bg = np.array(parse_rgba(fill)[:3] if fill else (255, 255, 255)) / 255
+    for u in a.units.values():
+        if u.kind == "text":
+            r, g, b, al = parse_rgba(a.els[u.members[0]].get("color"))
+            fg = al * np.array([r, g, b]) / 255 + (1 - al) * bg
+            lf, lb = _rel_luminance(fg), _rel_luminance(bg)
+            if (max(lf, lb) + 0.05) / (min(lf, lb) + 0.05) < CONTRAST_MIN_LARGE:
+                return False
+    return True
 
 
 def big_hero(a):

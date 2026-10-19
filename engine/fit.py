@@ -1,7 +1,8 @@
 """Turn a layout plan's slots into output elements.
 
 - Background: full canvas. A `cover` image crops; any other image keeps its aspect
-  ratio, as large as fits and centred (its `fit` can't change).
+  ratio, as large as fits and centred (its `fit` can't change). The subject recipe gives a
+  cover photo a smaller box instead, so its crop keeps the subject (eval.saliency).
 - Images and rigid units: one uniform scale for every member, so aspect ratios
   are exact, and rotated members stay inside because their rotated bounds scale too.
 - Text: the largest whole-number font that fits its box, measured with
@@ -199,6 +200,8 @@ def realize(a, plan, tw, th, focal=True):
     out = {i: copy.deepcopy(e) for i, e in a.els.items()}
     for b in a.background:
         place_background(out[b], tw, th)
+    for b, (x, y, w, h) in plan.knobs.get("bg", {}).items():  # the subject recipe: the photo at one end
+        out[b].update(x=x, y=y, width=w, height=h)
 
     placed = []
     for slot in plan.slots:

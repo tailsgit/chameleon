@@ -1,6 +1,7 @@
 """Choose the winning candidate, and the safety nets behind it.
 
-1. Drop duplicate candidates and any with a hard-rule violation (eval.check), then any that
+1. Drop duplicate candidates and any with a hard-rule violation (eval.check), then any whose
+   box shape crops off a photo's subject (eval.saliency.subject_kept), then any that
    put text newly on top of a busy image (eval.score.busy_text_over_image), then any that shrink a large
    element far below its share of the canvas (eval.score.large_share_kept), each unless that is all of them.
 2. Rank the rest by the geometric score (eval.score, ~1 ms each), render the top
@@ -20,6 +21,7 @@ import math
 import time
 
 from engine.analyze import full_box
+from eval.saliency import subject_kept
 from eval.check import check, text_layout
 from eval.score import SHARE_FLOOR, busy_text_over_image, large_share_kept, score
 
@@ -39,6 +41,10 @@ def select(source, target, outputs, preferred=None, deadline=None):
             unique.append(o)
 
     passing = [(o, score(source, target, o)["total"] + bonus(o)) for o in unique if _passes(source, target, o)]
+    kept = [(o, s) for o, s in passing if subject_kept(source, o)]
+    if kept and len(kept) < len(passing):
+        log.info("rejected %d candidates that crop a photo's subject off", len(passing) - len(kept))
+    passing = kept or passing
     clean = [(o, s) for o, s in passing if not busy_text_over_image(source, target, o)]
     if clean and len(clean) < len(passing):
         log.info("rejected %d candidates with text newly on a busy image", len(passing) - len(clean))

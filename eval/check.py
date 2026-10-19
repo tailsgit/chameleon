@@ -20,7 +20,8 @@ means every rule we can check passed. Rules (see NOTES.md sections 2 and 9):
   background_not_full_canvas
                        a cover image that filled the source canvas doesn't fill the output (our assumption;
                        not asked of one turned 90/270 degrees on a non-square canvas, which can't without
-                       its box going off the canvas)
+                       its box going off the canvas, nor of a photo whose subject the canvas's centre crop
+                       would cut off, in a box across one side whose crop keeps it: eval.saliency)
   text_overflow_height / text_overflow_width
                        wrapped text, laid out exactly as the renderer draws it, exceeds its box
 """
@@ -107,7 +108,7 @@ def check(source: dict, target_canvas: dict, output: Any) -> list[dict]:
             quarter = round((el.get("rotation", 0) or 0) / 90) % 2 == 1 and cw != ch
             if (el.get("type") == "image" and el.get("fit", "contain") == "cover" and not quarter
                     and _fills(src, source["canvas"]["width"], source["canvas"]["height"])
-                    and not _fills(el, cw, ch)):
+                    and not _fills(el, cw, ch) and not _keeps_subject(src, el, cw, ch)):
                 add(eid, "background_not_full_canvas", f"box {_fmt(box)} on {cw}x{ch}")
 
         if el.get("type") == "image" and el.get("fit", "contain") != "cover" and not _is_hidden(el) and not _is_hidden(src):
@@ -219,6 +220,18 @@ def _is_hidden(el):
 def _outside(box, cw, ch):
     t = CANVAS_TOLERANCE
     return box[0] < -t or box[1] < -t or box[2] > cw + t or box[3] > ch + t
+
+
+def _keeps_subject(src, el, cw, ch):
+    """A background photo whose centre crop at the canvas's shape would cut off its subject
+    (eval.saliency) may instead span one side of the canvas in a box shape that keeps it."""
+    from eval.saliency import SLACK, aspect_range
+    r = aspect_range(src)
+    if r is None or r[0] <= cw / ch <= r[1]:
+        return False
+    x0, y0, x1, y1 = el["x"], el["y"], el["x"] + el["width"], el["y"] + el["height"]
+    spans = (x0 <= 0.5 and x1 >= cw - 0.5) or (y0 <= 0.5 and y1 >= ch - 0.5)
+    return spans and r[0] / SLACK <= el["width"] / max(el["height"], 1e-9) <= r[1] * SLACK
 
 
 def _fills(el, cw, ch):
