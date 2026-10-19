@@ -194,7 +194,7 @@ class Sizer:
         return row
 
 
-def realize(a, plan, tw, th, focal=True):
+def realize(a, plan, tw, th, focal=True, keep_on_panel=True):
     """Build the output design for one plan."""
     sizer = plan.sizer
     out = {i: copy.deepcopy(e) for i, e in a.els.items()}
@@ -224,7 +224,7 @@ def realize(a, plan, tw, th, focal=True):
             grid.mark(element_box(out[m]))
 
     for pid in sorted(a.panels, key=lambda i: a.els[i]["width"] * a.els[i]["height"]):  # inner panels first
-        place_panel(out, sizer, a, pid, tw, th)
+        place_panel(out, sizer, a, pid, tw, th, keep_on_panel)
     for d in a.decorations:
         place_decoration(out, sizer, a, d, tw, th)
     for u in [*a.units.values(), *a.decorations]:
@@ -387,7 +387,7 @@ def _union_boxes(boxes):
     return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
-def place_panel(out, sizer, a, pid, tw, th):
+def place_panel(out, sizer, a, pid, tw, th, keep_on=True):
     """Fit a panel around wherever what sits on it ended up: that content's box plus an even
     padding (the source's tightest side, scaled like the content), so the empty part of the
     source panel is not kept. A non-cover image keeps its aspect (the box grows around the
@@ -413,7 +413,7 @@ def place_panel(out, sizer, a, pid, tw, th):
     f = min(1.0, w / (ob[2] - ob[0] + 2 * pad + 1e-6), h / (ob[3] - ob[1] + 2 * pad + 1e-6))
     # thin lines on it must stay visible (check() treats < 1px as hidden)
     f = max(f, *(MIN_DIM / max(min(out[i]["width"], out[i]["height"]), 1e-6) for i in on if out[i]["type"] != "text"), 0.0)
-    if PANEL_SHRINK_MIN <= f < 1:  # the panel can't grow enough (canvas, proportions): its content shrinks to stay on it
+    if keep_on and PANEL_SHRINK_MIN <= f < 1:  # the panel can't grow enough (canvas, proportions): its content shrinks to stay on it
         cx, cy = (ob[0] + ob[2]) / 2, (ob[1] + ob[3]) / 2
         for i in on:
             e = out[i]

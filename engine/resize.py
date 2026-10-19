@@ -43,9 +43,10 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                 break
             # stand-out floating units: centred in their free space, or near their source side; the scorer picks
             focal = (True, False) if any(a.units[u].emphasis for u in plan.floating) else (True,)
-            for f in focal:
+            # text kept on a panel that can't grow by shrinking it, or left overhanging: an extra candidate, not a replacement
+            for f, k in [(f, k) for f in focal for k in ((True, False) if a.panels else (True,))]:
                 try:
-                    outputs.append(realize(a, plan, target["width"], target["height"], focal=f))
+                    outputs.append(realize(a, plan, target["width"], target["height"], focal=f, keep_on_panel=k))
                     recipes.append(plan.recipe)
                     if len(outputs) <= 2:  # what judging one candidate costs on this machine (the second: the first warms the source's caches)
                         t = time.monotonic()
