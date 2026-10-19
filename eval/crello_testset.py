@@ -20,6 +20,9 @@ N_DESIGNS, SIZES_PER_DESIGN, SEED = 300, 3, 2026
 TESTSET = REPO / "eval" / "crello_testset.json"
 CATALOGUE = REPO / "eval" / "canvas_catalogue.json"
 STRUCTURE = REPO / "eval" / "crello_structure.json"
+QUICK = REPO / "eval" / "crello_quick.json"
+QUICK_N = 100
+ASPECT_CHANGE = (0.1, 0.5, 1.2)          # |ln(target aspect / source aspect)|: same | moderate | large | extreme
 ELEMENT_BANDS = (3, 7, 13, 21, 41)       # [3,7) [7,13) [13,21) [21,41)
 ASPECT_BANDS = (0.7, 0.95, 1.05, 1.6)    # tall | portrait | square | landscape | wide
 
@@ -65,11 +68,37 @@ def cases(split):
     """[(case name, design id, target {name, width, height})] for one split: dev, holdout, or
     structure (the dev designs in STRUCTURE, with their dev targets)."""
     designs = json.loads(TESTSET.read_text())["designs"]
+    if split == "quick":
+        keep = set(json.loads(QUICK.read_text())["cases"])
+        return [c for c in cases("dev") if c[0] in keep]
     if split == "structure":
         keep = set(json.loads(STRUCTURE.read_text())["designs"])
         designs = [d for d in designs if d["id"] in keep]
         split = "dev"
     return [(f"crello_{d['id']}__{_slug(t['name'])}", d["id"], t) for d in designs if d["split"] == split for t in d["targets"]]
+
+
+def build_quick(n=QUICK_N):
+    """About n crello-dev cases for iterating on a fix, stratified by aspect change (ASPECT_CHANGE) and
+    element-count band (ELEMENT_BANDS): each stratum gets its share of n (at least 2 when it has any),
+    drawn with a fixed seed. Case names only. Run with the samples: python -m eval.bench --suite quick"""
+    import math
+    designs = {d["id"]: d for d in json.loads(TESTSET.read_text())["designs"]}
+    strata = defaultdict(list)
+    for case, did, t in cases("dev"):
+        d = designs[did]
+        change = abs(math.log(t["width"] / t["height"] / d["aspect"]))
+        strata[(band(change, ASPECT_CHANGE), band(d["elements"], ELEMENT_BANDS))].append(case)
+    total = sum(len(v) for v in strata.values())
+    rng = random.Random(SEED)
+    chosen = []
+    for key in sorted(strata):
+        pool = sorted(strata[key])
+        k = min(len(pool), max(2, round(n * len(pool) / total)))
+        chosen += rng.sample(pool, k)
+    QUICK.write_text(json.dumps({"_note": "crello-dev cases for quick iteration; see build_quick", "cases": sorted(chosen),
+                                 "strata": {f"aspect{a}_elements{e}": len(v) for (a, e), v in sorted(strata.items())}}, indent=1))
+    print(f"{len(chosen)} cases from {total} in {len(strata)} strata")
 
 
 def build_structure(n=40):
