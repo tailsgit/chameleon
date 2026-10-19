@@ -4,9 +4,10 @@
     python -m eval.bench --render                     # also render each case + a contact sheet
     python -m eval.bench --contrast                   # also the render-based contrast penalty
     python -m eval.bench --suite crello-dev --render --jobs 8
+    python -m eval.bench --suite quick --jobs 8       # while iterating: ~100 crello-dev cases, then the samples
     python -m eval.bench --suite crello-holdout       # only to check for overfitting: never tune on it
 
-Suites: samples (eval/results/), crello-dev and crello-holdout (eval/results/<suite>/;
+Suites: samples (eval/results/), crello-quick, crello-dev, crello-structure and crello-holdout (eval/results/<suite>/;
 see eval/crello_testset.py; needs the converted designs from eval/crello_convert.py,
 whose assets are found through CHAMELEON_ASSETS, set here).
 
@@ -41,7 +42,7 @@ from eval.score import PENALTIES, score
 REPO = Path(__file__).resolve().parents[1]
 CATALOGUE = REPO / "eval" / "canvas_catalogue.json"
 SAMPLES = sorted((REPO / "input").glob("chameleon_sample_*.json"))
-SUITES = ("samples", "crello-dev", "crello-holdout", "crello-structure")
+SUITES = ("samples", "crello-dev", "crello-holdout", "crello-structure", "crello-quick")
 CELL, THUMB = 230, 200
 WORST_LISTED = 30
 
@@ -279,7 +280,13 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--render", action="store_true", help="render every case to PNG + contact sheet")
     ap.add_argument("--contrast", action="store_true", help="include the render-based contrast penalty")
-    ap.add_argument("--suite", choices=SUITES, default="samples")
+    ap.add_argument("--suite", choices=(*SUITES, "quick"), default="samples",
+                    help="quick = crello-quick (about 100 dev cases) then the samples: the suite to iterate on")
     ap.add_argument("--jobs", type=int, default=1, help="worker processes (timings then include contention)")
     args = ap.parse_args()
-    run(suite=args.suite, render=args.render, contrast=args.contrast, jobs=args.jobs)
+    for suite in (("crello-quick", "samples") if args.suite == "quick" else (args.suite,)):
+        t = time.perf_counter()
+        run(suite=suite, render=args.render, contrast=args.contrast, jobs=args.jobs)
+        rows = list(csv.DictReader((load_suite(suite)[1] / "cases.csv").open()))
+        print(f"{suite}: {sum(r['passed'] == 'True' for r in rows)}/{len(rows)} pass, average "
+              f"{sum(float(r['total'] or 0) for r in rows) / len(rows):.2f}, {time.perf_counter() - t:.0f} s")

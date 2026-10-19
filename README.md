@@ -198,7 +198,12 @@ python -m pytest                          # 180 tests
 python -m eval.bench                      # 45 sample cases: check + score -> eval/results/
 python -m eval.bench --render             # + a PNG per case and a contact sheet
 python -m eval.synthetic                  # 300 random designs, robustness
+python -m eval.bench --suite quick --jobs 8          # while iterating: ~100 Crello cases + the samples, ~2 min
+python -m eval.snapshots compare v3 --suite crello-quick   # against stored outputs of an earlier version
 ```
+
+When iterating on a change, run the quick suite and compare against a stored snapshot; run the full
+Crello suites (dev, structure, holdout once) and the Docker check only when a change is ready to merge.
 
 The Crello test sets need the dataset converted locally first (`eval/crello_convert.py`,
 `eval/crello_testset.py`). No Crello design, image or text is in the repository or the image;

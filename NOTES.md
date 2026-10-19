@@ -969,3 +969,26 @@ The organisers still haven't confirmed that shipping a geometry-only library der
 
 ### Decision
 Dev and holdout both beat v2, and by eye it is clearly better: merged into main and tagged **v3**.
+
+## 25. Faster iteration loop (tooling, on main)
+
+- **Quick suite** (`crello-quick`, `eval/crello_quick.json`, `build_quick`): 100 crello-dev cases, a share of each of 16 strata (4 aspect-change buckets x 4 element-count bands, at least 2 each), fixed seed.
+  - `python -m eval.bench --suite quick --jobs 8` runs it, then the 45 samples.
+- **Snapshots** (`eval/snapshots.py`): outputs of earlier versions, stored once in `cache/snapshots/<version>/<suite>/` next to `data/` (Crello content, never in git).
+  - Their scores are computed once per scorer (hash of `score.py` + `check.py`) and kept beside them.
+  - `compare` diffs a fresh run against them without regenerating anything.
+  - v3 is stored for dev, structure, holdout, quick and samples (1,165 outputs; scoring all of them once took 22 s).
+- **Timings** (idle Mac, 8 workers):
+
+| Run | Time |
+|---|---|
+| quick suite | 122 s (87 s Crello + 34 s samples) |
+| snapshot compare | under 1 s |
+| crello-dev | 553 s |
+| crello-holdout | 310 s |
+| crello-structure | 142 s |
+| Docker build + 45 samples | about 5-6 min |
+
+  - A pre-merge round (dev + structure + holdout + samples + Docker) is about 23 min, against 60-70 min when baselines were regenerated every round.
+- **Noise floor:** the same code run twice changed 2 of the 100 quick outputs (-0.32 average). The time budget cuts at different points under different load, so differences that small are noise.
+- **Process:** quick suite + snapshot compare while iterating; full suites and the Docker check only before a merge; with/without switches only on request.
