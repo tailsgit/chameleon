@@ -1154,3 +1154,22 @@ Not merged: dev and holdout drop. Next: a cheap contrast penalty in the default 
   - Winners in dev: the pinned/filled variants 73 of 600, `split_grid` a few.
 - **By eye** (`eval/results/crello-review-v5`, the 30 dev cases that changed most): about 13 better (My new review x2, Fashion Talks, Coffee, Invoice, Pharmacy, Cooking, Start of Tournament, Cozy playlist, Focus, Robot), about 6 worse (Save 10%, Family Festival x2, Coffee LinkedIn banner, Dinnerware, Warme Dusche x_post), the rest about the same.
 - **Still weak:** CVs and invoices in banners, the pistaliar leaderboard, and "Save 10%" in a skyscraper (the safety tier now keeps its photo at the cost of a cramped layout).
+
+## 30. Learned critic parked; diagnosis tooling (branches `critic`, `diagnose`; nothing merged)
+
+- **Critic (branch `critic`, HANDOFF.md):** a 1.84M-parameter transformer trained on synthetic ranking pairs (good layout vs damaged copy) reached 0.883 val pair accuracy but only 0.578 pooled on the 245 hand labels (hand scorer 0.830).
+  - The synthetic task is too easy: a linear model on 3 summary features (drift from the source position, area ratio, max font) gets 0.922 on val.
+  - Its scores carry a per-design offset (79% of their variance is between designs).
+  - Leave-one-label-file-out, the best weight for adding it to the hand scorer is ~0 in every fold. Parked; not shipped.
+- **Evaluation harness `eval/critic_cv.py`:** leave-one-label-file-out folds, each design in exactly one fold (45 rows moved to their design's main file). Takes any scorer: a function of a row, a `(train_rows, test_rows)` fitter, or a score file keyed by output md5. Runs in 0.1 s from the hand-score cache.
+  - Hand scorer baseline:
+    - pooled pairwise 0.830;
+    - within-design 0.788 pair-weighted (443 pairs, 416 of them from the 3 organiser samples), 0.546 as the mean over 15 designs;
+    - bad-vs-rest AUC 0.841, and 0.754 inside the band where the hand score is at least 85 (140 outputs);
+    - top-1 bad 0.778 over the 45 designs with 2+ labelled outputs, and 0.412 over the 17 that have a non-bad option.
+- **Pages** (`eval/diagnose_pages.py`, served by `eval/tag_server.py` on port 8780; renders and tags gitignored):
+  - `/failures/`: the 74 outputs labelled bad that the hand scorer rates at least 85, with a primary-failure tag and a note, saved to `eval/results/failure_tags.json`.
+  - `/recall/`: 40 labelled cases (20 at an aspect change of 3x or more, 20 at 1.25-3x, seed 0, 37 designs).
+    - Each shows the engine's pick and then the best candidates that differ clearly from those already shown (distance at least 0.08; near-duplicates measure 0-0.04).
+    - 37 cases show 8; 3 have fewer distinct layouts.
+    - Saves to `eval/results/recall_tags.json` with the recall summary.

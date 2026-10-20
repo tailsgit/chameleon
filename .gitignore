@@ -36,3 +36,10 @@ eval/results/crello-*/.labels.*
 # Layout critic: weights are published on Hugging Face, not committed (HANDOFF.md); data and runs live in ../data/critic
 engine/data/critic.onnx
 *.pt
+
+# Diagnosis pages (Crello renders) and your tags: evaluation data, kept out of git like labels.json
+eval/results/crello-diagnose/
+eval/results/failure_tags.json
+eval/results/recall_tags.json
+eval/results/.failure_tags.*
+eval/results/.recall_tags.*
