@@ -32,3 +32,7 @@ eval/results/crello-*/outputs/
 eval/results/crello-*/renders/
 eval/results/crello-*/labels.json
 eval/results/crello-*/.labels.*
+
+# Layout critic: weights are published on Hugging Face, not committed (HANDOFF.md); data and runs live in ../data/critic
+engine/data/critic.onnx
+*.pt

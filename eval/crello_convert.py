@@ -3,7 +3,7 @@
     python -m eval.crello_convert                 # convert every shard, validate, write the report
     python -m eval.crello_convert --compare 20    # also render 20 next to Crello's own previews
 
-Reads   $CRELLO_DATA      (default ../data/crello: validation-*.parquet)
+Reads   $CRELLO_DATA      (default ../data/crello: the shards matching $CRELLO_SHARDS, default validation-*.parquet)
 Writes  $CRELLO_CHAMELEON (default ../data/crello_chameleon), outside the repo:
           designs/<id>.json   {"source": design, "meta": {...}}
           assets/<asset_id>   one PNG per image element: Crello's own crop of it
@@ -264,7 +264,7 @@ def run(compare=0):
     (OUT / "previews").mkdir(exist_ok=True)
     skipped, fonts_used, kept = Counter(), Counter(), []
     font_list = None
-    for shard in sorted(DATA.glob("validation-*.parquet")):
+    for shard in sorted(DATA.glob(os.environ.get("CRELLO_SHARDS") or "validation-*.parquet")):
         pf = pq.ParquetFile(shard)
         fonts, formats = font_names(pf)
         font_list = fonts

@@ -1,0 +1,23 @@
+# Layout critic, small: ~1.9M parameters. Paths are relative to the repo root.
+model:
+  d_model: 192
+  layers: 4
+  heads: 4
+  ff: 768
+  dropout: 0.1
+
+train:
+  seed: 0
+  epochs: 40
+  batch_groups: 64        # groups (one positive + its negatives) per step
+  max_negatives: 12       # negatives sampled per group per step (all kinds; a group has up to ~12)
+  lr: 3.0e-4
+  weight_decay: 0.01
+  warmup_steps: 300
+  grad_clip: 1.0
+  num_threads: 4          # CPU threads (torch.set_num_threads); MPS ignores it
+
+data:
+  dir: ../data/critic     # critic.make_data --out
+
+out_dir: ../data/critic/runs/layout_small   # checkpoints and log.csv

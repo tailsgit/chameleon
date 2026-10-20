@@ -2,3 +2,4 @@ Pillow>=10.0
 git+https://github.com/CyberAgentAILab/cr-renderer
 jsonschema>=4.18
 ortools==9.12.4544
+onnxruntime==1.20.1  # runs the layout critic (engine/critic_score.py) when one is installed; no PyTorch at run time

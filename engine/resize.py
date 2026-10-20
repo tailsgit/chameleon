@@ -8,10 +8,14 @@ scale is also the preferred candidate: the designer's layout already fits.
 Two limits: a wall-clock budget (BUDGET_S) after which no new candidates are made and
 the best so far is chosen, and a guard that drops a retrieved layout which gives the
 headline or main image much less of the canvas than the best recipe layout does.
+
+CHAMELEON_CRITIC=1 adds a hill-climbing search (engine.search) after selection, judged by the trained
+critic (engine.critic_score; the hand scorer when no model is installed). Off by default.
 """
 
 import copy
 import logging
+import os
 from typing import Any
 
 from engine.analyze import analyze
@@ -19,7 +23,7 @@ from engine.clock import now
 from engine.finish import variants
 from engine.fit import realize
 from engine.recipes import generate
-from engine.select import _passes, better_variant, fallback, repair, select
+from engine.select import _passes, _tier, better_variant, fallback, repair, select
 from eval.score import _area, _drawn_box, key_elements, score
 
 SAME_ASPECT = 0.02  # relative aspect-ratio change below which the source layout is kept as is
@@ -28,6 +32,8 @@ GEN_SHARE = 0.5     # plans are generated in the first half of it...
 SELECT_COST = 5     # ...and realising stops while the rest still covers judging every candidate made: the guard
                     # and select check, score and test legibility of each, about this many times (measured as we go)
 GUARD = 0.7         # a retrieved layout must give the headline and main image at least this share of the best recipe's
+SEARCH_END_S = 12.5  # CHAMELEON_CRITIC=1: the search stops this long after the start (the brief's budget: 13.5 s)
+SEARCH_STARTS = 3    # ...starting from the chosen layout, this many other best candidates and the best preserve layout
 log = logging.getLogger(__name__)
 
 
@@ -68,6 +74,10 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                 if any(o is win for o in extra):
                     outputs, recipes = outputs + [win], recipes + ["finished"]
                 best = win
+            if os.environ.get("CHAMELEON_CRITIC") == "1" and any(o is best for o in outputs):
+                best = _critic_search(source, target, a, outputs, recipes, best, min(deadline, start + SEARCH_END_S))
+                if not any(o is best for o in outputs):
+                    outputs, recipes = outputs + [best], recipes + ["searched"]
             log.info("winner: %s", next((r for o, r in zip(outputs, recipes) if o is best),
                                         "uniform" if best is preferred else "repaired"))
             return best
@@ -79,6 +89,30 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
     except Exception:
         log.exception("fallback failed; using repaired stretch")
         return _stretch(source, target)
+
+
+def _critic_search(source, target, a, outputs, recipes, best, deadline):
+    """The chosen layout, or the best layout engine.search climbs to from it and the best other candidates, when that
+    passes check(), is in no worse a safety tier (engine.select._tier) and the critic scores it higher."""
+    from engine.search import search
+    ranked = sorted(((score(source, target, o)["total"], k) for k, o in enumerate(outputs) if o is not best), reverse=True)
+    others = [outputs[k] for _s, k in ranked if recipes[k] != "preserve"][:SEARCH_STARTS]
+    others += [outputs[k] for _s, k in ranked if recipes[k] == "preserve"][:1]
+    starts = [best] + [o for o in others if _passes(source, target, o)]
+    try:
+        found = search(source, target, a, starts, deadline)
+    except Exception:
+        log.exception("critic search failed; keeping the chosen layout")
+        return best
+    from engine.critic_score import scores
+    tb, base = _tier(source, target, best), scores(source, target, [best], a)[0]
+    for s, o in found:  # best first; each passed check() in the search
+        if s <= base:
+            break
+        if _tier(source, target, o) >= tb:
+            log.info("critic search: %.3f over the chosen layout's %.3f", s, base)
+            return o
+    return best
 
 
 def _guard(source, target, outputs, recipes):

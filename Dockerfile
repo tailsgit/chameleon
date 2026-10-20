@@ -26,6 +26,13 @@ COPY chameleon_design_schema_v0.9.json .
 COPY brand_kit/ ./brand_kit/
 COPY renderer/ ./renderer/
 COPY engine/ ./engine/
+# the layout critic's feature encoder and the search's geometry helpers (no training code, no PyTorch)
+COPY critic/__init__.py critic/features.py critic/damage.py ./critic/
+# Optional trained critic, fetched at BUILD time (run time is offline): docker build --build-arg
+# CRITIC_URL=https://huggingface.co/<user>/<repo>/resolve/main/critic.onnx . It is used only with
+# CHAMELEON_CRITIC=1; without it the engine is unchanged. See HANDOFF.md.
+ARG CRITIC_URL=""
+RUN if [ -n "$CRITIC_URL" ]; then python -c "import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], 'engine/data/critic.onnx')" "$CRITIC_URL"; fi
 # the engine ranks candidates with the same checker and scorer we benchmark with
 COPY eval/*.py ./eval/
 
