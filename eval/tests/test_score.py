@@ -254,3 +254,20 @@ def test_text_leaving_its_button_is_penalised():
         el(o, "cta_label")["y"] -= 300
     pen = _mutated(move_label)["holders"]
     assert pen["penalty"] > 0.2 and "cta_label off cta_bg" in pen["detail"]
+
+
+def test_groups_and_fill_catch_a_split_pair_and_shrunk_content():
+    t = lambda i, x, y, w, h, c, fs, **kw: {"id": i, "type": "text", "x": x, "y": y, "width": w, "height": h, "content": c,
+                                          "font_family": "Solstice Sans", "font_size": fs, "color": "rgba(0,0,0,1)", **kw}
+    src = {"canvas": {"width": 1000, "height": 1000}, "elements": [
+        t("h", 100, 100, 800, 120, "A big headline here", 90), t("lab", 100, 500, 300, 40, "Price:", 28),
+        t("val", 100, 550, 300, 60, "$20 per box", 44, font_weight="bold")]}
+    canvas = src["canvas"]
+    assert score(src, canvas, src)["breakdown"]["groups"]["penalty"] == 0
+    split = copy.deepcopy(src)
+    split["elements"][2].update(x=600, y=850)  # the value walks away from its label
+    assert score(src, canvas, split)["breakdown"]["groups"]["penalty"] == 1
+    small = copy.deepcopy(src)
+    for e in small["elements"]:  # everything squeezed into the top-left quarter
+        e.update(x=e["x"] / 3, y=e["y"] / 3, width=e["width"] / 3, height=e["height"] / 3, font_size=e["font_size"] // 3)
+    assert score(src, canvas, small)["breakdown"]["fill"]["penalty"] > 0.9

@@ -16,6 +16,7 @@ critic (engine.critic_score; the hand scorer when no model is installed). Off by
 import copy
 import logging
 import os
+from itertools import zip_longest
 from typing import Any
 
 from engine.analyze import analyze
@@ -42,9 +43,11 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
     start = now()
     deadline = start + BUDGET_S
     try:
-        a = analyze(source)
-        outputs, recipes, per = [], [], 0.0
-        for plan in generate(a, target["width"], target["height"], start + GEN_SHARE * BUDGET_S):
+        # tight groups held rigid (engine.analyze) and, when that changed the units, also free: the scorer picks
+        tight, plain = analyze(source), analyze(source, tight=False)
+        pool = [tight] + ([plain] if plain.units.keys() != tight.units.keys() else [])
+        outputs, recipes, made_by, per = [], [], [], 0.0
+        for a, plan in _alternate([_plans(x, target, start + GEN_SHARE * BUDGET_S) for x in pool]):
             if outputs and now() + SELECT_COST * per * len(outputs) > deadline:
                 log.info("time budget reached after %d candidates", len(outputs))
                 break
@@ -55,6 +58,7 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                 try:
                     outputs.append(realize(a, plan, target["width"], target["height"], focal=f, keep_on_panel=k))
                     recipes.append(plan.recipe)
+                    made_by.append(a)
                     if len(outputs) <= 2:  # what judging one candidate costs on this machine (the second: the first warms the source's caches)
                         t = now()
                         _passes(source, target, outputs[-1]) and score(source, target, outputs[-1])
@@ -65,9 +69,11 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
         sa = source["canvas"]["width"] / source["canvas"]["height"]
         if abs(target["width"] / target["height"] / sa - 1) <= SAME_ASPECT:
             preferred = fallback(source, target)
+        made_by = {id(o): x for o, x in zip(outputs, made_by)}
         outputs, recipes = _guard(source, target, outputs, recipes)
         if outputs or preferred is not None:
             best = select(source, target, outputs, preferred, deadline)
+            a = made_by.get(id(best), tight)
             if any(o is best for o in outputs):  # the chosen layout pinned to the corners and/or grown into its free space
                 extra = variants(a, best, target["width"], target["height"])
                 win = better_variant(source, target, best, extra)
@@ -89,6 +95,19 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
     except Exception:
         log.exception("fallback failed; using repaired stretch")
         return _stretch(source, target)
+
+
+def _plans(a, target, until):
+    for plan in generate(a, target["width"], target["height"], until):
+        yield a, plan
+
+
+def _alternate(gens):
+    """Walk the generators in step and keep the i-th item of generator i % n (then the rest of the longest), so
+    several analyses together make as many candidates as one: each covers its share of every recipe's knobs."""
+    for i, items in enumerate(zip_longest(*gens)):
+        mine = items[i % len(items)]
+        yield mine if mine is not None else next(x for x in items if x is not None)
 
 
 def _critic_search(source, target, a, outputs, recipes, best, deadline):

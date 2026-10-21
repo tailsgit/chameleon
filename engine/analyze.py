@@ -12,6 +12,9 @@ knowledge of particular designs or ids. Steps:
      a speech bubble, a label); the tightest such holder wins
    - a non-text element >= 90% inside such a holder (an icon on a card)
    - a decoration whose area is >= 80% inside a content unit (tight layering)
+   - the pairs of eval.score.tight_relations (label + value, shadow copy, text + underline, logo + name),
+     while the joined unit covers <= TIGHT_MAX_AREA of the canvas; the headline and main image only take
+     a shadow copy (a text over the headline). analyze(source, tight=False) skips this step
 3. Decorations: ungrouped shapes that contain nothing and are faint (effective
    alpha < 0.5), lines, or bleed off the canvas, and thin rule lines of any type
    (<= 4px thick, 10x longer). They are not laid out, only re-anchored afterwards.
@@ -34,7 +37,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from eval.check import rotated_bbox, text_layout
-from eval.score import ATTACH_MIN, emphasis, siblings
+from eval.score import ATTACH_MIN, emphasis, key_elements, siblings, tight_relations
 from renderer.converter.colorutil import parse_rgba
 
 ACTION_WORDS = {
@@ -57,6 +60,7 @@ CARD_MAX_AREA = 0.5     # ...and up to this share of the canvas when it is flat 
 FLAT_STD = 25.0         # an image whose opaque pixels vary less than this (RGB std) is flat
 TEXT_ON_HOLDER = 0.8   # text this much on a card, blob or button drawn under it belongs to it (a tilted headline
                        # on a brushstroke pokes out); other elements need 0.9
+TIGHT_MAX_AREA = 0.25  # a tight group joins only while the result covers at most this share of the canvas
 LABEL_MAX_AREA = 0.05  # ...unless it is smaller than this share of the canvas
 CARD_MAX_ASPECT = 4.0   # an image holds text as a card only when at most this elongated
 GRID_SIZE = 1.15        # grid cells' anchors: width and height within this ratio of each other
@@ -138,7 +142,7 @@ def full_box(el):
     return _union([box, rotated_bbox(el)]) if el.get("rotation", 0) else box
 
 
-def analyze(source):
+def analyze(source, tight=True):
     els = {e["id"]: e for e in source["elements"]}
     sw, sh = source["canvas"]["width"], source["canvas"]["height"]
     z = {i: (e.get("z_index", 0), n) for n, (i, e) in enumerate(els.items())}
@@ -189,6 +193,18 @@ def analyze(source):
                 if f != i and _area(full_box(els[f])) > _area(full_box(els[i])) and _inside(full_box(els[i]), full_box(els[f])) >= 0.9:
                     union(f, i)
                     break
+
+    # tight groups (eval.score.tight_relations: label + value, a shadow copy, text + underline, logo + name) move as one
+    # (the headline and main image keep their own unit, so they can still re-wrap and grow; a shadow copy still joins)
+    keys = set(key_elements(source))
+    for r in tight_relations(source) if tight else ():
+        a, b = r["a"], r["b"]
+        if {a, b} & keys and not (r["kind"] == "overlap" and els[a]["type"] == els[b]["type"] == "text"):
+            continue
+        if a in parent and b in parent and find(a) != find(b):
+            joined = [full_box(els[i]) for i in rest if find(i) in (find(a), find(b))]
+            if _area(_union(joined)) <= TIGHT_MAX_AREA * sw * sh:
+                union(a, b)
 
     clusters = {}
     for i in rest:

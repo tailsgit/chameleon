@@ -38,6 +38,7 @@ def _source(sample):
         from eval.crello_convert import OUT
         os.environ["CHAMELEON_ASSETS"] = str(OUT / "assets")
         return json.loads((OUT / "designs" / f"{sample[len('crello_'):]}.json").read_text())["source"]
+    os.environ["CHAMELEON_ASSETS"] = str(REPO / "brand_kit" / "assets")  # not left pointing at the crello assets
     return json.loads((REPO / "input" / f"chameleon_sample_{sample}.json").read_text())["source"]
 
 

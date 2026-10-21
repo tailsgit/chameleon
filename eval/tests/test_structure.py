@@ -171,3 +171,24 @@ def test_coverage_penalty_sees_bare_canvas():
     half = design(1000, 1000, [dict(bg, width=500)])
     assert coverage(str(src).replace("'", '"')) == 1.0 and abs(coverage(str(half).replace("'", '"')) - 0.5) < 0.03
     assert score(src, src["canvas"], half)["breakdown"]["coverage"]["penalty"] == 1.0
+
+
+def test_label_and_value_move_as_one_unit():
+    src = design(1080, 1080, [
+        text("h", 100, 100, 880, 160, "A big headline here", fs=96),
+        text("lab", 100, 600, 300, 40, "Price:", fs=28),
+        text("val", 100, 650, 300, 60, "$20 per box", fs=44, font_weight="bold"),
+        text("far", 600, 950, 400, 40, "Fine print far away", fs=20),
+    ])
+    unit_of = lambda a, i: next(uid for uid, u in a.units.items() if i in u.members)
+    tight, plain = analyze(src), analyze(src, tight=False)
+    assert unit_of(tight, "lab") == unit_of(tight, "val") != unit_of(tight, "h")
+    assert unit_of(plain, "lab") != unit_of(plain, "val")
+    target = {"width": 1920, "height": 1080}
+    assert check(src, target, resize(src, target)) == []
+
+
+def test_alternate_splits_the_plans_between_analyses():
+    from engine.resize import _alternate
+    assert list(_alternate([iter("abcd"), iter("ABCDEF")])) == list("aBcDEF")
+    assert list(_alternate([iter("ab")])) == list("ab")

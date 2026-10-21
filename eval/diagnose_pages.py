@@ -2,6 +2,8 @@
 
     python -m eval.diagnose_pages failures          # labelled bad although the hand scorer gives >= BAND
     python -m eval.diagnose_pages recall --jobs 4   # RECALL_N labelled cases: the engine's top distinct candidates
+    python -m eval.diagnose_pages recall2 --jobs 4  # the same cases re-run by the current engine (own page and tags)
+    python -m eval.diagnose_pages rerun --jobs 4    # the non-"fine" failures: labelled output next to today's pick
     python -m eval.tag_server --port 8780           # then open the pages
 
 failures: every labelled output (eval.critic_cv rows) with hand score >= BAND and label bad: source, output, target
@@ -125,7 +127,7 @@ def _recall_case(job):
     from critic.make_data import engine_run
     from engine.select import _passes, repair
     from eval.score import score
-    case, sample, target, change, k = job
+    case, sample, target, change, k, name = job
     src = _source(sample)
     win, cands = engine_run(src, target)
     fixed = [(o, False) if _passes(src, target, o) else (repair(src, target, o), True) for o in cands]
@@ -136,7 +138,7 @@ def _recall_case(job):
             break
         if all(_dist(fixed[j][0], o) >= DISTINCT for o, *_ in shown):
             shown.append((fixed[j][0], s, False, fixed[j][1]))
-    dest = ROOT / "recall"
+    dest = ROOT / name
     _thumb(src, dest / f"r{k}_source.png")
     _source(sample)
     out = []
@@ -148,7 +150,7 @@ def _recall_case(job):
             "raw_passing": sum(1 for _o, r in fixed if not r)}
 
 
-def recall(jobs):
+def recall(jobs, name="recall"):
     from critic.eval import labelled
     rows = labelled()
     cases = {}
@@ -171,19 +173,19 @@ def recall(jobs):
         chosen = (first + [c for c in pool if c not in first])[:RECALL_N // 2]
         print(f"  pool {len(pool)} cases ({len(used)} designs) -> {len(chosen)}")
         picks += chosen
-    dest = ROOT / "recall"
+    dest = ROOT / name
     dest.mkdir(parents=True, exist_ok=True)
-    job = [(c, cases[c][0], cases[c][1], cases[c][2], k) for k, c in enumerate(picks)]
+    job = [(c, cases[c][0], cases[c][1], cases[c][2], k, name) for k, c in enumerate(picks)]
     with ProcessPoolExecutor(jobs) as ex:
         items = list(ex.map(_recall_case, job))
-    script = SAVE_JS + """
+    script = SAVE_JS + f"const NAME={json.dumps(name)};" + """
 let state={};
 function summary(){let n=0,a=0,nx=0,ax=0;for(const it of DATA){const s=state[it.case];if(!s||!s.reviewed)continue;n++;if(s.acceptable)a++;
  if(it.extreme){nx++;if(s.acceptable)ax++}}const pct=(x,y)=>y?(100*x/y).toFixed(0)+'%':'–';
  const line=`reviewed ${n} / ${DATA.length} · recall ${pct(a,n)} (${a}/${n}) · recall at >= 3x ${pct(ax,nx)} (${ax}/${nx})`;
  document.getElementById('bar').innerHTML='<b>'+line+'</b>';return {reviewed:n,acceptable:a,recall:n?a/n:null,reviewed_3x:nx,acceptable_3x:ax,recall_3x:nx?ax/nx:null,line}}
-function set(c,field,val){state[c]=Object.assign(state[c]||{},{[field]:val,reviewed:true,at:new Date().toISOString()});state._summary=summary();save('recall',state)}
-load('recall').then(s=>{state=s||{};document.getElementById('items').innerHTML=DATA.map((it,k)=>{const s=state[it.case]||{};
+function set(c,field,val){state[c]=Object.assign(state[c]||{},{[field]:val,reviewed:true,at:new Date().toISOString()});state._summary=summary();save(NAME,state)}
+load(NAME).then(s=>{state=s||{};document.getElementById('items').innerHTML=DATA.map((it,k)=>{const s=state[it.case]||{};
  const opts=['', ...it.cands.map(c=>String(c.n)),'none'].map(v=>`<option value="${v}" ${s.best===v?'selected':''}>${v===''?'—':v==='none'?'none of them':'#'+v}</option>`).join('');
  return `<div class=item><div class=m>${k+1}. ${esc(it.case)} · target ${it.target} · aspect change ${it.ratio}x ${it.extreme?'<b>(&ge; 3x)</b>':''} · ${it.candidates_made} candidates made, ${it.raw_passing} pass the hard rules unrepaired</div>
  <div class=row><div class=fig><img src="${it.src}" loading=lazy alt="source"><div class=m>source</div></div>
@@ -194,18 +196,67 @@ load('recall').then(s=>{state=s||{};document.getElementById('items').innerHTML=D
     intro = (f"{len(items)} cases from labelled designs (seed {SEED}): {sum(i['extreme'] for i in items)} with an aspect change &ge; {EXTREME:g}x, "
              f"{sum(not i['extreme'] for i in items)} moderate ({MODERATE:g}x to {EXTREME:g}x). Each row: the source, the engine's pick (green), then the "
              f"best-scoring candidates that differ clearly from those already shown (up to {TOP}). A case counts as reviewed once you touch either control. "
-             "Saves to <code>eval/results/recall_tags.json</code>.")
-    (dest / "index.html").write_text(_page("Candidate Recall", intro, items, script))
+             f"Saves to <code>eval/results/{name}_tags.json</code>.")
+    (dest / "index.html").write_text(_page("Candidate Recall" + (" (re-run)" if name != "recall" else ""), intro, items, script))
     (dest / "cases.json").write_text(json.dumps(items, indent=1))
     print(f"recall: {len(items)} cases, {sum(len(i['cands']) for i in items)} candidates shown -> {dest / 'index.html'}")
 
 
+def _rerun_case(job):
+    import logging
+    logging.disable(logging.WARNING)
+    os.environ["CHAMELEON_CPU_CLOCK"] = "1"
+    from engine.resize import resize
+    from eval.score import score
+    iid, case, sample, bad, k = job
+    src = _source(sample)
+    target = {"width": bad["canvas"]["width"], "height": bad["canvas"]["height"]}
+    new = resize(src, target)
+    dest = ROOT / "rerun"
+    _thumb(src, dest / f"f{k}_source.png")
+    _thumb(bad, dest / f"f{k}_bad.png")
+    _thumb(new, dest / f"f{k}_new.png")
+    return {"id": iid, "case": case, "src": f"f{k}_source.png", "bad": f"f{k}_bad.png", "new": f"f{k}_new.png",
+            "same": key(new) == key(bad), "bad_score": score(src, target, bad)["total"], "new_score": score(src, target, new)["total"]}
+
+
+def rerun(jobs):
+    """The non-"fine" failure tags: the labelled-bad output next to what the current engine picks for the same case."""
+    from critic.eval import labelled
+    tags = json.loads((ROOT.parent / "failure_tags.json").read_text())
+    rows = {f"{r['file']}|{r['case']}|{key(r['output'])[:10]}": r for r in labelled()}
+    job = [(iid, rows[iid]["case"], rows[iid]["sample"], rows[iid]["output"], k) for k, (iid, t) in enumerate(sorted(tags.items()))
+           if iid in rows and not t.get("note", "").strip().lower().startswith("fine")]
+    (ROOT / "rerun").mkdir(parents=True, exist_ok=True)
+    with ProcessPoolExecutor(jobs) as ex:
+        items = list(ex.map(_rerun_case, job))
+    for it in items:
+        it["note"] = tags[it["id"]].get("note", "")
+    same = sum(i["same"] for i in items)
+    up = sum(not i["same"] and i["new_score"] > i["bad_score"] for i in items)
+    script = """const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+document.getElementById('items').innerHTML=DATA.map((it,k)=>`<div class=item><div class=m>${k+1}. ${esc(it.case)} · your note: ${esc(it.note)}</div>
+ <div class=row><div class=fig><img src="${it.src}" loading=lazy alt=source><div class=m>source</div></div>
+ <div class=fig><img src="${it.bad}" loading=lazy alt="labelled bad"><div class=m>labelled bad · score now ${it.bad_score}</div></div>
+ <div class=fig><img class=pick src="${it.new}" loading=lazy alt="new pick"><div class=m>current engine${it.same?' · <b>same output</b>':''} · score ${it.new_score}</div></div></div></div>`).join('')"""
+    intro = (f"{len(items)} failures you tagged (not 'fine'). Current engine: {same} unchanged, {len(items) - same} different "
+             f"({up} of them scored higher than the labelled output by the current scorer). View only; nothing is saved.")
+    (ROOT / "rerun" / "index.html").write_text(_page("Failures Re-run", intro, items, script))
+    (ROOT / "rerun" / "cases.json").write_text(json.dumps(items, indent=1))
+    print(f"rerun: {intro}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("page", choices=("failures", "recall"))
+    ap.add_argument("page", choices=("failures", "recall", "recall2", "rerun"))
     ap.add_argument("--jobs", type=int, default=4)
     args = ap.parse_args()
-    failures() if args.page == "failures" else recall(args.jobs)
+    if args.page == "failures":
+        failures()
+    elif args.page == "rerun":
+        rerun(args.jobs)
+    else:
+        recall(args.jobs, args.page)
 
 
 if __name__ == "__main__":

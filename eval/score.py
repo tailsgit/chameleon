@@ -72,6 +72,7 @@ REL_TIGHT, REL_LOOSE = 0.35, 0.7  # close neighbours: their gap under this many 
 REL_BLOCK_MAX = 0.5          # a proximity cluster may not grow past this share of the canvas
 REL_LOOSEN_ASPECT = 1.5     # from this aspect change on, something overlapping a picture may be moved off it
 REL_KEPT = 0.2               # a pair is kept when its relative offset moved by at most this (x pair size)
+TIGHT_IMAGE = 0.05            # an image under this share of the canvas next to a text is one thing with it
 LABEL_WORDS, LABEL_CHARS = 4, 32  # a label: at most this many words or characters, or ending in ':'
 OVER_FREE, OVER_FULL = 0.05, 0.5  # share of a text newly on top of an image: no / full penalty
 BUSY_COVER = 0.2             # a text newly this much on top of an image...
@@ -88,9 +89,10 @@ SIBLING_HEIGHT = 1.25        # sibling units' heights within this ratio of each 
 SIBLING_SCALE = 0.1          # siblings in the output scaled within 10% of each other
 SIBLING_RESTACK = 0.25       # kept together but no longer a row: worth it only when the row would be unreadable
 SIBLING_SPREAD = 2.0         # their union box at most this times their summed area (or the source's, if looser)
+FILL_FREE, FILL_FULL = 0.6, 0.25  # content box's share of the target vs of the source: no / full penalty
 GAP_FREE, GAP_FULL = 0.1, 0.3  # an empty band between content: free up to 10% of the side, full penalty at 30%
 COVER_GRID = 48               # points per side sampled for canvas coverage
-COVER_SRC = 0.9              # a source painted over this share of its canvas is (nearly) full-bleed...
+COVER_SRC = 0.2              # a source painted over at least this share of its canvas (a panel, a half-bleed photo)...
 COVER_FULL = 0.15            # ...and this share of the target newly showing bare canvas = full penalty
 BALANCE_FULL = 0.25          # content centre this much further off-centre than in the source = full penalty
 NEAR_MISS_REL = 0.02         # edges closer than 2% of the canvas side, but not aligned, are a near miss
@@ -527,6 +529,50 @@ def relationships_penalty(c: Ctx):
     return sum(r["strength"] for r in broken) / total, ", ".join(f"{r['kind']} {r['a']}~{r['b']}" for r in broken[:5])
 
 
+def groups_penalty(c: Ctx):
+    """Tight groups the eye reads as one thing must stay together, whatever else moves (tight_relations).
+    Same test as relationships_penalty (_kept), only these pairs, weighted far higher. Penalty = share broken."""
+    rels = tight_relations(c.source)
+    if not rels:
+        return 0.0, ""
+    broken = [r for r in rels if not _kept(c, r)]
+    return len(broken) / len(rels), ", ".join(f"{r['kind']} {r['a']}~{r['b']}" for r in broken[:5])
+
+
+def tight_relations(source):
+    """The relationships (relations()) that make one thing to the eye: a label and what it labels (label + value,
+    icon + text), a text drawn over another text (a shadow copy, an outline), a text and its rule line (an
+    underline), two texts that are close neighbours (strength-1 near pair), and a small image (under
+    TIGHT_IMAGE of the canvas: a logo mark, an icon) right next to a text. engine.analyze makes them rigid."""
+    from engine.analyze import _is_rule_line  # engine.analyze imports this module
+    src = {e["id"]: e for e in source["elements"]}
+    small = TIGHT_IMAGE * source["canvas"]["width"] * source["canvas"]["height"]
+    out = []
+    for r in relations(source):
+        a, b = src[r["a"]], src[r["b"]]
+        types = {a["type"], b["type"]}
+        near = r["kind"] == "near" and r["strength"] == 1
+        if (r["kind"] == "label" or types == {"text"} and (r["kind"] == "overlap" or near)
+                or "text" in types and (_is_rule_line(a) or _is_rule_line(b))
+                or near and types == {"text", "image"} and min(_area(_drawn_box(e)) for e in (a, b) if e["type"] == "image") < small):
+            out.append(r)
+    return out
+
+
+def related_order_penalty(c: Ctx):
+    """Texts the source relates (a label, close neighbours: any relationship but an overlap) must still read in
+    their source order, row by row or column by column as in reading_order_penalty. Works per element, so it
+    also sees "shower Baby" inside one unit. Penalty = share of those pairs flipped under both readings."""
+    pairs = [(r["a"], r["b"]) for r in relations(c.source) if r["kind"] != "overlap"
+             and c.src[r["a"]]["type"] == c.src[r["b"]]["type"] == "text" and r["a"] in c.out_box and r["b"] in c.out_box]
+    if not pairs:
+        return 0.0, ""
+    first = lambda boxes, a, b, cols=False: _reading_order(boxes, [[a], [b]], columns=cols)[0][0]
+    flipped = [(a, b) for a, b in pairs
+               if first(c.src_box, a, b) not in (first(c.out_box, a, b), first(c.out_box, a, b, True))]
+    return len(flipped) / len(pairs), ", ".join(f"{a}|{b}" for a, b in flipped[:5])
+
+
 def _on_picture(c, r):
     """An overlap pair whose larger member is an image: a callout over a photo, not text on its own shape."""
     big = max((r["a"], r["b"]), key=lambda i: _area(_drawn_box(c.src[i])))
@@ -757,6 +803,17 @@ def space_penalty(c: Ctx):
             f"content spans {fx:.0%} x {fy:.0%} of the canvas, widest inner gap {gap:.0%}, empty ninths {empty}")
 
 
+def fill_penalty(c: Ctx):
+    """Content shrunk into part of the canvas: the content box's share of the target canvas against its share of
+    the source's (both clipped to the canvas); free down to FILL_FREE of it, full penalty at FILL_FULL (_steep)."""
+    bs, bo = _content_box(c.src_box, c.units), _content_box(c.out_box, c.units)
+    if bs is None or bo is None:
+        return 0.0, ""
+    share = lambda b, w, h: _area((max(b[0], 0), max(b[1], 0), min(b[2], w), min(b[3], h))) / (w * h)
+    s, o = share(bs, c.sw, c.sh), share(bo, c.tw, c.th)
+    return _steep(FILL_FREE, FILL_FULL, o / max(s, 1e-9)), f"content box {s:.0%} of the source canvas, {o:.0%} of the target"
+
+
 def balance_penalty(c: Ctx):
     """Content huddled to one side: how much further the content box's centre
     sits from the canvas centre (as a fraction of each side, worst axis) than
@@ -943,7 +1000,7 @@ def contrast_penalty(c: Ctx):
 
 
 def coverage_penalty(c: Ctx):
-    """Bare canvas (renders white) newly showing through, when the source was (nearly) full-bleed:
+    """Bare canvas (renders white) newly showing through, when the source painted at least COVER_SRC of its canvas:
     share of the source canvas covered minus share of the target covered, COVER_FULL = full penalty."""
     s, o = coverage(json.dumps(c.source, sort_keys=True)), coverage(json.dumps(c.output, sort_keys=True))
     if s < COVER_SRC:
@@ -1026,6 +1083,9 @@ PENALTIES = {  # name: (function, weight, needs_render). Fitted to all hand labe
     "key_size": (key_size_penalty, 2.0, False),
     "text_over_image": (text_over_image_penalty, 3.0, False),  # pinned like key_size: free fit 0.63
     "relationships": (relationships_penalty, 0.5, False),
+    "groups": (groups_penalty, 2.0, False),  # pinned like key_size: what reads as one thing must not fall apart
+    "related_order": (related_order_penalty, 1.0, False),
+    "fill": (fill_penalty, 1.15, False),  # as space
     "share_drift": (share_drift_penalty, 1.0, False),  # all 135 labels: pooled 0.864 -> 0.867, crello-dev 0.876 -> 0.938  # labels barely move with it: pooled 0.857 -> 0.858, samples -0.014
     "space": (space_penalty, 1.15, False),
     "balance": (balance_penalty, 1.38, False),
