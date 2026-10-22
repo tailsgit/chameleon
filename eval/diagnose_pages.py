@@ -204,7 +204,7 @@ function summary(){let n=0,a=0,nx=0,ax=0;for(const it of DATA){const s=state[it.
 function set(c,field,val){state[c]=Object.assign(state[c]||{},{[field]:val,reviewed:true,at:new Date().toISOString()});state._summary=summary();save(NAME,state)}
 load(NAME).then(s=>{state=s||{};document.getElementById('items').innerHTML=DATA.map((it,k)=>{const s=state[it.case]||{};
  const opts=['', ...it.cands.map(c=>String(c.n)),'none'].map(v=>`<option value="${v}" ${s.best===v?'selected':''}>${v===''?'—':v==='none'?'none of them':'#'+v}</option>`).join('');
- return `<div class=item><div class=m>${k+1}. ${esc(it.case)} · target ${it.target} · aspect change ${it.ratio}x ${it.extreme?'<b>(&ge; 3x)</b>':''} · ${it.generator_unique?'<b>★ generator added a unique candidate</b> · ':''}${it.candidates_made} candidates made, ${it.raw_passing} pass the hard rules unrepaired</div>
+ return `<div class=item><div class=m>${k+1}. ${esc(it.case)} · target ${it.target} · aspect change ${it.ratio}x ${it.extreme?'<b>(&ge; 3x)</b>':''} · ${it.generator_unique?'<b>★ generator added a unique candidate</b> · ':''}${it.candidates_made} candidates made, ${it.raw_passing} pass the hard rules</div>
  <div class=row><div class=fig><img src="${it.src}" loading=lazy alt="source"><div class=m>source</div></div>
  ${it.cands.map(c=>`<div class=fig><img class="${c.pick?'pick':''}" src="${c.img}" loading=lazy alt="candidate ${c.n}"><div class=m>#${c.n}${c.pick?' · <b>engine pick</b>':''} · hand ${c.hand}${c.repaired?' · repaired':''}</div></div>`).join('')}</div>
  <p><label><input type=checkbox ${s.acceptable?'checked':''} onchange="set('${it.case}','acceptable',this.checked)"> at least one candidate is acceptable</label>

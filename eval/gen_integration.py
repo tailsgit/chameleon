@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import collections
 import hashlib
-import importlib.util
 import json
 import logging
 import math
@@ -55,9 +54,11 @@ def cases(which:str)->list:
 
 
 def legacy():
-    spec=importlib.util.spec_from_file_location('_reference_rules_resize',MAIN/'engine/resize.py')
-    mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
-    return mod.resize
+    # Compile read-only reference source without creating a cache in its checkout.
+    path=MAIN/'engine/resize.py'
+    namespace={'__name__':'_reference_rules_resize','__file__':str(path)}
+    exec(compile(path.read_text(),str(path),'exec'),namespace)
+    return namespace['resize']
 
 
 def diagnostics(source:dict,target:dict)->dict:
