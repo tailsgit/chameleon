@@ -1,39 +1,71 @@
-# Integration checkpoint
+# Generator integration
 
-Worktree: `chameleon-int`, branch `gen-integration`, based on `rules` at
-`6e80cddee95dd5aa8d0718c96f4efdf45d02750a`. Neither reference checkout is edited.
+Worktree `chameleon-int`, branch `gen-integration`, based on rules
+`6e80cddee95dd5aa8d0718c96f4efdf45d02750a`. Both reference checkouts remain unchanged.
 
-`engine/data/generator.onnx` is a local, ignored artifact copied from
-`data/generator/runs/cvae_full`. Its checksum is validated against interface.json.
-The interface also declares the original fixed latent table, whose checksum is
-validated; those same vectors are embedded in ONNX. Runtime never samples.
+The generator adds proposals; existing fitting, hard checks, local repair, safety
+tiers and scoring choose the output. No scorer formula/weight or CP-SAT solver
+change. The shared training continuous/canvas/group feature builders are imported
+by the ONNX adapter. CPU only, one thread, fixed 16 latent vectors, source kind
+`real`; no Torch import in the complete inference path.
 
-The adapter imports the exact shared training continuous/canvas/group builders.
-Training-only data imports are lazy. Runtime uses ONNX Runtime CPU with one thread
-and does not import Torch. Existing fitting handles backgrounds, attachments,
-panels, decorations and rotations. Unit proposals are projected to the canvas;
-rigid members scale uniformly. The existing local repair runs after realization.
-No generator CP-SAT projection is added; preserve solver settings remain unchanged.
+## Runtime policy
 
-The enabled prototype uses 24 base realizations, round-robin by recipe family,
-plus at most GEN_K generator realizations (default 6). Selection and its scorer
-are unchanged, with no elapsed-time gate. Optional critic search uses 8 rounds
-when enabled. GEN_OFF=1 retains legacy timing, generation and selection semantics.
+- Default **K=8**, selected after the full 600-case max CPU was 7.165 s.
+- Per case: 4 recipe attempts on tight groups, 4 retrieval plans shared across
+  analyses, 16 base realizations, at most K generator realizations, 3 contrast
+  renders. Existing 4 preserve variants per analysis and solver settings stay intact.
+- `GEN_OFF=1` disables generator proposals and retains these count caps. It is
+  deliberately different from rules; capped-OFF quality is measured separately.
+- `GEN_K=4/6/8` overrides the fit cap. Fixed count budgets replace runtime elapsed
+  cutoffs. Optional critic search, still off by default, uses 8 fixed rounds.
+- Rigid fitting uses the existing `Sizer.floor_scale()` so thin members remain
+  visible when the canvas permits it. Entire rigid groups scale uniformly.
+- Backgrounds, panels, attachments, decorations and rotations keep engine fitting
+  semantics. There is no generator CP-SAT projection.
 
-## Checks and remaining gates
+Model weights are local and ignored at `engine/data/generator.onnx` (6,039,539
+bytes); copy source is `data/generator/runs/cvae_full`. interface.json declares
+and verifies the original fixed latent table and model checksum. No data or
+weights are committed.
 
-- Six focused integration/diagnosis tests passed.
-- 200 held-out designs: raw reanalysis equals cached training groups; features
-  byte-identical; engine/training ONNX output maximum difference 0.0; repeats exact.
-- Normal-clock flag-off comparison: 48/50 byte-identical. Two mismatches must
-  remain reported. The legacy cutoff depends on measured execution speed/cache
-  state. Clock replay is a supplementary diagnostic, not a replacement pass.
-- K=6 on 40 recall cases: median CPU 3.936502 s, max 22.526669 s. Budget FAIL.
-  Profiling identifies upstream recipe/retrieval generation, which runs before
-  the realization cap, as the main cost. Its work still needs a fixed count cap.
-- K=4/8 timing, full repeat/load determinism, 600 dev evaluation, all-16
-  post-repair hard-rule diagnostics, regression comparison, and recall3 page
-  generation have NOT run. The recall3 builder and marker are implemented only.
+## Measured checks
 
-Logs and per-case results are outside git under `data/generator/integration`.
-This is an incomplete integration checkpoint; do not treat it as release-ready.
+- 9 focused tests pass. 200 held-out raw designs reanalyze to the cached training
+  groups; shared features and engine/training ONNX outputs are exact. Float32
+  PyTorch checkpoint versus ONNX: max absolute difference 9.536743e-7 (<1e-6).
+- Historical pre-cap flag-off adapter: 50/50 exact JSON bytes with identical
+  recorded clocks. Two ordinary-clock mismatches remain recorded as evidence of
+  legacy timing sensitivity. Current capped-OFF is compared by score instead.
+- 600 dev, K=8: CPU p50/p95/max 1.613 / 3.968 / 7.165 s. Mean hand-score change
+  versus the committed rules CSV -0.674917; 24 drops greater than 10 points.
+  Capped-OFF: -1.000050, 21 drops. Generator proposals rescue 6 of those and
+  introduce 9 new drops; 15 remain caps-sufficient. Generator wins 193/600.
+- Same 40 cases repeated normally and with four extra CPU-burn processes:
+  zero exact-output-byte mismatches in either comparison.
+- Restoring the existing rigid-member floor fixes all 16 near-aspect failures.
+  Remaining generator visibility failures are 64/9600 samples across four cases,
+  where the current rigid arrangement cannot meet the 1px floor on that canvas.
+  Checks were not weakened. Final outputs pass 598/600, the same count as rules.
+
+Full timing, all-16 pass rates, original 25-case and selected 24-case regression
+tables, and all case IDs are outside git at `data/generator/integration/`.
+Completed per-case result files are immutable and validate their engine-code
+fingerprint; use a new mode name after source changes.
+
+## Labeling
+
+Recall3 has the same 40 cases/order as recall2. It marks **GENERATOR WON** cases
+and unique generator contributions. Source/output PNGs and tags are ignored.
+
+From this worktree, using the existing venv:
+
+```sh
+export TMPDIR=/Volumes/Extreme/AdobeHackathon/tmp
+/Volumes/Extreme/AdobeHackathon/chameleon/.venv/bin/python -m eval.tag_server --port 8781
+```
+
+Open `http://127.0.0.1:8781/recall3/`. Tags save only in this worktree's
+`eval/results/recall3_tags.json`. No labeling server was started by this task.
+
+No Docker runs, downloads or merges were performed.

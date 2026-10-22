@@ -22,6 +22,7 @@ from generator.features import KINDS, ROLES, MAX_GROUPS, N_CONT, continuous, can
 from generator.group_features import group_features
 
 DATA = Path(__file__).parent / 'data'
+DEFAULT_K = 8  # validated on all 600 dev cases; maximum CPU 7.165 s
 DEDUP_L1 = 0.005
 log = logging.getLogger(__name__)
 LAST: dict[str, Any] = {}
@@ -149,7 +150,7 @@ def fit_sample(a: Any, target: dict, groups: list[dict], boxes: np.ndarray, samp
 
 def candidates(a: Any, target: dict, k: int | None = None) -> list[dict]:
     LAST.clear(); LAST.update(attempted=0, passing=0, unique=0, sample_indices=[], outputs=[])
-    k = int(os.environ.get('GEN_K','6')) if k is None else k
+    k = int(os.environ.get('GEN_K',str(DEFAULT_K))) if k is None else k
     if not 0 <= k <= 16:
         raise ValueError('GEN_K must be between 0 and 16')
     groups, raw = predict(a,target)

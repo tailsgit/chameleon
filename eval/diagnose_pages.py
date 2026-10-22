@@ -20,6 +20,7 @@ Labels are only used to choose what to show; nothing is fitted.
 
 import argparse
 import html
+import hashlib
 import json
 import math
 import os
@@ -131,10 +132,12 @@ def _recall_case(job):
     src = _source(sample)
     win, cands = engine_run(src, target)
     contributed = 0
+    generator_won = False
     if name == "recall3":
         from engine.gen_candidates import LAST
         cands.extend(LAST.get("outputs", []))
         contributed = LAST.get("new_unique", 0)
+        generator_won = bool(LAST.get("won_selection", False))
     fixed = [(o, False) if _passes(src, target, o) else (repair(src, target, o), True) for o in cands]
     ranked = sorted(((score(src, target, o)["total"], j) for j, (o, _r) in enumerate(fixed)), key=lambda t: -t[0])
     shown = [(win, score(src, target, win)["total"], True, not _passes(src, target, win))]
@@ -152,7 +155,8 @@ def _recall_case(job):
         out.append({"n": n, "img": f"r{k}_{n}.png", "hand": round(s, 1), "pick": pick, "repaired": rep})
     return {"case": case, "sample": sample, "target": f"{target['width']}×{target['height']}", "ratio": round(change, 2),
             "extreme": change >= EXTREME, "src": f"r{k}_source.png", "cands": out, "candidates_made": len(cands),
-            "raw_passing": sum(1 for _o, r in fixed if not r), "generator_unique": contributed}
+            "raw_passing": sum(1 for _o, r in fixed if not r), "generator_unique": contributed, "generator_won": generator_won,
+            "wire_sha": hashlib.sha256(json.dumps(win, indent=2).encode()).hexdigest()}
 
 
 def recall(jobs, name="recall"):
@@ -204,7 +208,7 @@ function summary(){let n=0,a=0,nx=0,ax=0;for(const it of DATA){const s=state[it.
 function set(c,field,val){state[c]=Object.assign(state[c]||{},{[field]:val,reviewed:true,at:new Date().toISOString()});state._summary=summary();save(NAME,state)}
 load(NAME).then(s=>{state=s||{};document.getElementById('items').innerHTML=DATA.map((it,k)=>{const s=state[it.case]||{};
  const opts=['', ...it.cands.map(c=>String(c.n)),'none'].map(v=>`<option value="${v}" ${s.best===v?'selected':''}>${v===''?'—':v==='none'?'none of them':'#'+v}</option>`).join('');
- return `<div class=item><div class=m>${k+1}. ${esc(it.case)} · target ${it.target} · aspect change ${it.ratio}x ${it.extreme?'<b>(&ge; 3x)</b>':''} · ${it.generator_unique?'<b>★ generator added a unique candidate</b> · ':''}${it.candidates_made} candidates made, ${it.raw_passing} pass the hard rules</div>
+ return `<div class=item><div class=m>${k+1}. ${esc(it.case)} · target ${it.target} · aspect change ${it.ratio}x ${it.extreme?'<b>(&ge; 3x)</b>':''} · ${it.generator_won?'<b style="color:var(--accent)">★ GENERATOR WON</b> · ':''}${it.generator_unique?'<b>generator added a unique candidate</b> · ':''}${it.candidates_made} candidates made, ${it.raw_passing} pass the hard rules</div>
  <div class=row><div class=fig><img src="${it.src}" loading=lazy alt="source"><div class=m>source</div></div>
  ${it.cands.map(c=>`<div class=fig><img class="${c.pick?'pick':''}" src="${c.img}" loading=lazy alt="candidate ${c.n}"><div class=m>#${c.n}${c.pick?' · <b>engine pick</b>':''} · hand ${c.hand}${c.repaired?' · repaired':''}</div></div>`).join('')}</div>
  <p><label><input type=checkbox ${s.acceptable?'checked':''} onchange="set('${it.case}','acceptable',this.checked)"> at least one candidate is acceptable</label>
