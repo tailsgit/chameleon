@@ -109,9 +109,22 @@ def geometry_cost(groups: list[dict], boxes: np.ndarray) -> float:
                for k,i in enumerate(ids) for j in ids[k+1:])
 
 
+def rigid_slot(sizer: Any, u: Any, box: np.ndarray, tw: int, th: int) -> Any:
+    """Uniformly fit a unit, including the engine's member-visibility floor."""
+    from engine.recipes import Slot
+    x,y,w,h=box
+    fit=min(tw/max(u.w,1e-9),th/max(u.h,1e-9))
+    scale=max(min(w*tw/max(u.w,1e-9),h*th/max(u.h,1e-9)),min(sizer.floor_scale(u),fit))
+    W,H=u.w*scale,u.h*scale
+    cx,cy=(x+w/2)*tw,(y+h/2)*th
+    px,py=min(max(cx-W/2,0.),tw-W),min(max(cy-H/2,0.),th-H)
+    cols=(u.cols or len(u.parts)) if u.parts else None
+    return Slot(u.id,px,py,W,H,scale=scale,cols=cols)
+
+
 def fit_sample(a: Any, target: dict, groups: list[dict], boxes: np.ndarray, sample: int) -> dict:
     from engine.fit import Sizer, realize
-    from engine.recipes import Plan, Slot
+    from engine.recipes import Plan
     from engine.retrieve import _place
     from engine.select import repair
     tw, th = target['width'], target['height']
@@ -126,9 +139,7 @@ def fit_sample(a: Any, target: dict, groups: list[dict], boxes: np.ndarray, samp
         if u.kind == 'text':
             slots.append(_place(a,sizer,u,[x,y,x+w,y+h],tw,th))
         else:
-            scale = min(w*tw/max(u.w,1e-9), h*th/max(u.h,1e-9))
-            cols = (u.cols or len(u.parts)) if u.parts else None
-            slots.append(Slot(u.id,x*tw,y*th,u.w*scale,u.h*scale,scale=scale,cols=cols))
+            slots.append(rigid_slot(sizer,u,np.asarray([x,y,w,h]),tw,th))
     plan = Plan('generator', {'sample':sample},slots,[u.id for u in a.units.values() if u.host],
                 math.sqrt(tw*th/(a.sw*a.sh)),0.,sizer)
     # Existing background, attachment, panel, decoration and rotation semantics.

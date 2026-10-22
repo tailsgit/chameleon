@@ -78,3 +78,18 @@ def test_contrast_budget_keeps_legacy_default(monkeypatch):
     assert seen==[11,10,9]
     seen.clear();selection.select({}, {}, pool)
     assert len(seen)==selection.RENDER_TOP==10
+
+
+def test_rigid_member_visibility_floor_and_canvas_bounds():
+    from types import SimpleNamespace
+    from engine.gen_candidates import rigid_slot
+    u=SimpleNamespace(id='group',w=580.,h=158.,cols=None,parts=[])
+    sizer=SimpleNamespace(floor_scale=lambda unit:.75)  # a 2px member must remain 1.5px
+    slot=rigid_slot(sizer,u,np.array([.9,.9,.2,.2]),600,200)
+    assert 2*slot.scale>=1.5
+    assert slot.x>=0 and slot.y>=0 and slot.x+slot.w<=600 and slot.y+slot.h<=200
+    assert abs(slot.w/slot.h-u.w/u.h)<1e-12
+    # If the floor cannot fit, use the largest uniform scale that can fit.
+    small=rigid_slot(sizer,u,np.array([.1,.1,.01,.01]),100,20)
+    assert small.w<=100 and small.h<=20
+    assert abs(small.w/small.h-u.w/u.h)<1e-12
