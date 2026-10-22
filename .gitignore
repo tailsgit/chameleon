@@ -43,3 +43,8 @@ eval/results/failure_tags.json
 eval/results/recall_tags.json
 eval/results/.failure_tags.*
 eval/results/.recall_tags.*
+
+# Local generator weights and test-only recall3 annotations
+engine/data/generator.onnx
+eval/results/recall3_tags.json
+eval/results/.recall3_tags.*

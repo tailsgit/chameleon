@@ -37,12 +37,12 @@ def search(source, target, a, starts, deadline, seed=SEED, path=None):
     if not units or not states:
         return sorted(((s, o) for s, o in states), key=lambda t: -t[0])
     k = 0
-    while now() < deadline:
+    while (k < 8 if deadline is None else now() < deadline):
         st = states[k % len(states)]
         k += 1
         props = [p for p in (_propose(a, st[1], units, rng) for _ in range(MOVES_PER_ROUND)) if p is not None]
         props = [p for p in props if _passes(source, target, p)]
-        if not props or now() >= deadline:
+        if not props or (deadline is not None and now() >= deadline):
             continue
         sc = scores(source, target, props, a, path)
         j = max(range(len(props)), key=sc.__getitem__)

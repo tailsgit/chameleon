@@ -18,7 +18,7 @@ from pathlib import Path
 
 RESULTS = Path(__file__).resolve().parent / "results"
 ROOT = RESULTS / "crello-diagnose"
-TAGS = {n: RESULTS / f"{n}_tags.json" for n in ("failure", "recall", "recall2")}  # recall2: the rules branch's re-run
+TAGS = {n: RESULTS / f"{n}_tags.json" for n in ("failure", "recall", "recall2", "recall3")}  # recall2: the rules branch's re-run
 MAX_BODY = 2_000_000
 _lock = threading.Lock()
 
