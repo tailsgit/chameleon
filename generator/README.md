@@ -134,3 +134,68 @@ Run the jobs under `caffeinate -i`, with seed 2026 and logs under Phase 2b.
 Completed shards are verified and reused on resume, never overwritten; incomplete
 publication directories may be rebuilt. Do not install packages, use network,
 change `engine/`, or start Phase 3 as part of this workflow.
+
+## Phase 2c and Phase 3
+
+`python -m generator.partial_pairs` uses existing descriptors only (no downloads,
+conversion, or engine runs). A retained edge must occur in every maximum-cardinality
+one-to-one matching. Keep a pair only when these forced edges cover at least 60%
+of both designs. All source groups remain present; unmatched target placeholders
+are zero with `matched=False` and target index -1, and never enter losses/metrics.
+Keep `real_strict` separately for evaluation; it uses the `real` model token and
+is not sampled as a fifth training kind. Aspect buckets use absolute log2(B/A).
+
+Run `python -m generator.features`, then `python -m generator.baselines` before
+training. The numeric cache and baseline tables live in `data/generator/phase3`.
+The copy baseline uniformly fits all source boxes into B. Geometry retrieval uses
+the existing library, aspect filter, composition ranking, role/kind/size/aspect
+Hungarian assignment, and its first 16 ranked layouts. Unassigned groups use copy;
+fewer than sixteen layouts are repeated. This baseline does not invoke text fitting,
+rendering, or full engine reflow. Metrics average masked per-pair box L1.
+
+The 1.95M-parameter CVAE embeds raw continuous features with Linear before every
+LayerNorm path, including canvas and posterior target features. A 3-block transformer
+conditions on the canvas and source-kind tokens. During training a posterior block
+sees matched target boxes; inference uses only sixteen fixed standard-normal latent
+vectors stored in the checkpoint/ONNX. The shared decoder predicts unbounded x/y
+and positive sizes; real target boxes are never clipped. No text, fingerprints or
+design identity enters the model.
+
+The config is `generator/configs/cvae.yaml`. Each 100,000-example epoch has 1,250
+batches of 80: exactly 24 stretch, 24 whole-fit, 16 engine and 16 real per batch.
+Cheap kinds are sampled without replacement (30k each); engine/real with replacement
+(20k each). Seeds depend on epoch; posterior noise depends on global step. Every
+step checks all loss terms and all gradients for finiteness before clipping/update.
+Box L1 and excess-over-target overlap use matched groups only; KL warms up over
+5,000 steps. Model selection/early stopping uses only partial-real val best-of-16.
+
+Run artifacts use `/Volumes/Extreme/AdobeHackathon/data/generator/runs/<name>`:
+
+- `python -m generator.training --mode overfit --name cvae_overfit20`
+- `python -m generator.training --name cvae_smoke --seconds 300`
+- `python -m generator.training --name cvae_full --seconds 20700`
+- Resume: add `--resume <run>/last.pt` with the same config/name. Time budget is
+  cumulative across resumes. Exact epoch/batch position, optimizer state and steps
+  are restored. `last.pt` is saved every ten minutes and every epoch; `best.pt` on
+  significant real-val improvement. Step and validation CSVs record progress and
+  epoch time. Run all jobs under `caffeinate -i`, with redirected logs outside Git.
+
+`python -m generator.verify_training_data` prints exclusion/campaign leakage and
+checks forced correspondence masks and feature-cache alignment against pair shards.
+`python -m generator.evaluate --checkpoint <run>/best.pt` writes every kind/bucket's
+best-of-16, median-of-16, copy/retrieval baseline and latent-diversity table.
+`python -m generator.export --checkpoint <run>/best.pt` exports opset 17, under 10 MB,
+checks all validation pairs against CPU PyTorch at max absolute error <1e-5, runs two
+identical ONNX passes, saves the latent table, and times one-thread CPU inference.
+The proposed real-val collapse threshold is mean pairwise box distance 0.005, about
+40% of observed median training variation for same-source/similar-aspect examples.
+Never extend the authorized compute budget or continue after non-finite training
+without the user's decision. Do not integrate the model into `engine/`.
+
+The validated `cvae_full` run stopped after 61 epochs; its selected checkpoint is
+step 51,250 (41 completed epochs), using minimum-improvement tolerance 1e-4.
+Artifacts are in `data/generator/runs/cvae_full`: `generator.onnx`, `latents.npy`,
+`interface.json`, `evaluation.md`, `export.json`, the final report and CSV curves.
+The interface metadata documents exact tensor shapes, feature/category ordering,
+normalization, padding and the fixed `real` inference token. All 16 candidates are
+returned in a single call; only valid group positions should be consumed.
