@@ -1,0 +1,25 @@
+seed: 2026
+model:
+  d: 192
+  layers: 3
+  heads: 4
+  latent: 16
+  seed: 2026
+learning_rate: 0.0003
+weight_decay: 0.0001
+grad_clip: 1.0
+overlap_weight: 0.01
+kl_weight: 0.001
+kl_warmup_steps: 5000
+batches_per_epoch: 1250
+batch_shares: [0.3, 0.3, 0.2, 0.2]
+max_epochs: 200
+patience: 20
+min_delta: 0.0001
+full_seconds: 20700
+checkpoint_seconds: 600
+overfit_steps: 2000
+overfit_learning_rate: 0.001
+overfit_l1_threshold: 0.005
+overfit_stochastic_threshold: 0.01
+collapse_threshold: 0.005

@@ -1,0 +1,129 @@
+{
+  "code_commit": "9d3fc2f61e532372fce3df17d6f2294edef13de3",
+  "feature_implementation": "generator/features.py continuous() and canvases(); aspect features are physical aspect ratios, boxes are normalized to canvas A",
+  "inputs": {
+    "canvas": {
+      "dtype": "float32",
+      "fields": [
+        "ln(A_width/1080)",
+        "ln(A_height/1080)",
+        "ln(B_width/1080)",
+        "ln(B_height/1080)",
+        "ln(aspect_B/aspect_A)"
+      ],
+      "shape": [
+        "batch",
+        5
+      ]
+    },
+    "cat": {
+      "dtype": "int64",
+      "fields": [
+        "kind",
+        "role"
+      ],
+      "kinds": [
+        "background",
+        "panel",
+        "flow_text",
+        "image",
+        "rigid",
+        "row",
+        "grid"
+      ],
+      "roles": [
+        "background",
+        "panel",
+        "headline",
+        "subhead",
+        "body",
+        "fineprint",
+        "cta",
+        "hero",
+        "logo",
+        "badge",
+        "decoration"
+      ],
+      "shape": [
+        "batch",
+        40,
+        2
+      ]
+    },
+    "cont": {
+      "dtype": "float32",
+      "fields": [
+        "x",
+        "y",
+        "w",
+        "h",
+        "log_aspect_div4",
+        "log1p_char_count_div8",
+        "mean_log_image_aspect_div4",
+        "log1p_area_share",
+        "z_order_div40",
+        "member_count_div40",
+        "part_count_div40",
+        "cols_div8",
+        "floating",
+        "text_fraction",
+        "image_fraction",
+        "shape_fraction"
+      ],
+      "shape": [
+        "batch",
+        40,
+        16
+      ]
+    },
+    "source": {
+      "dtype": "int64",
+      "inference_value": 3,
+      "shape": [
+        "batch"
+      ],
+      "values": {
+        "engine": 2,
+        "real": 3,
+        "stretch": 0,
+        "whole_fit": 1
+      }
+    },
+    "valid": {
+      "dtype": "float32",
+      "meaning": "1 for every source group, 0 for padding",
+      "shape": [
+        "batch",
+        40
+      ]
+    }
+  },
+  "latents_sha256": "b78275a679b6b392ad9166f405fc977ceb3fa4e0c936e3c94f2c72f64ab13148",
+  "max_groups": 40,
+  "onnx_sha256": "ff5ea412d4c1142c9b87e85950592d81d37a3a26d6edfc405818095b099663ee",
+  "opset": 17,
+  "output": {
+    "boxes": {
+      "coordinates": "fractions of canvas B; x/y unbounded, w/h positive",
+      "dtype": "float32",
+      "fields": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "shape": [
+        "batch",
+        16,
+        40,
+        4
+      ]
+    }
+  },
+  "padding": "Zero cont/cat/valid beyond the group count. Ignore output boxes for invalid/padding positions.",
+  "post_commit_parity_max_abs": 2.2351741790771484e-07,
+  "runtime_randomness": false,
+  "samples": 16,
+  "seed": 2026,
+  "source_inputs": "Geometry, group kind/role, char counts, image aspects only; no text, pixels, identities or campaign hashes"
+}
