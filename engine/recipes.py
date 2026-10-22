@@ -74,7 +74,7 @@ class Plan:
     sizer: Sizer = field(repr=False, default=None)
 
 
-def generate(a, tw, th, deadline=None):
+def generate(a, tw, th, deadline=None, *, recipe_limit=None, retrieval_limit=None):
     """All candidate plans for one task: every applicable recipe x its knob grid, then the
     retrieved layouts. Past `deadline` (now()), nothing more is added."""
     sizer = Sizer(a, tw, th)
@@ -82,9 +82,12 @@ def generate(a, tw, th, deadline=None):
     has_hero = hero is not None and not hero.floating
     aspect = tw / th
     tiny = min(tw, th) < 200 or tw * th < 120_000
-    plans, cut = [], []
+    plans, cut, tasks = [], [], {}
 
     def add(fn, name, **knobs):
+        if recipe_limit is not None:
+            tasks.setdefault(name, []).append((fn, name, knobs))
+            return
         if plans and deadline is not None and now() > deadline:
             if not cut:
                 log.info("time budget reached after %d plans", len(plans))
@@ -123,9 +126,17 @@ def generate(a, tw, th, deadline=None):
                 add(strip, "compact", hero_pos="left", img_mult=1.0, align=align, cap=cap, primaries_only=True)
             else:
                 add(stack, "compact", align=align, vjust="spread", img_mult=1.0, cap=cap, order="source", primaries_only=True)
+    if recipe_limit is not None:
+        from itertools import zip_longest, islice
+        queue = (task for row in zip_longest(*tasks.values()) for task in row if task is not None)
+        for fn, name, knobs in islice(queue, recipe_limit):
+            plan = fn(a, sizer, tw, th, **knobs)
+            if plan is not None:
+                plan.recipe, plan.knobs, plan.sizer = name, knobs, sizer
+                plans.append(plan)
     if cut:
         return plans
-    return plans + preserve_plans(a, sizer, tw, th, deadline) + retrieved(a, sizer, tw, th, deadline)
+    return plans + preserve_plans(a, sizer, tw, th, deadline) + retrieved(a, sizer, tw, th, deadline, limit=retrieval_limit)
 
 
 # --- recipes ------------------------------------------------------------------

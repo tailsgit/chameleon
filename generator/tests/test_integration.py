@@ -42,3 +42,39 @@ def test_runtime_no_torch_or_pyarrow():
     sess,meta=runtime()
     assert sess.get_session_options().intra_op_num_threads==1
     assert len(meta['fixed_latents'])==16
+
+
+def test_recipe_budget_is_applied_before_measuring(monkeypatch):
+    from types import SimpleNamespace
+    from engine import recipes
+    hero=SimpleNamespace(floating=False,w=80,h=80)
+    a=SimpleNamespace(sw=100,sh=100,by_role=lambda role:hero)
+    calls=[]
+    def make(*args,**kwargs):
+        calls.append(1)
+        return recipes.Plan('',{},[],[],1.,0.)
+    for name in ['stack','split','anchor','strip']:monkeypatch.setattr(recipes,name,make)
+    monkeypatch.setattr(recipes,'quiet_regions',lambda *a:[])
+    monkeypatch.setattr(recipes,'preserve_plans',lambda *a:[])
+    limits=[]
+    monkeypatch.setattr(recipes,'retrieved',lambda *a,limit=None:limits.append(limit) or [])
+    plans=recipes.generate(a,400,100,recipe_limit=5,retrieval_limit=3)
+    assert len(calls)==len(plans)==5
+    assert len(set(p.recipe for p in plans))>=3
+    assert limits==[3]
+
+
+def test_contrast_budget_keeps_legacy_default(monkeypatch):
+    from engine import select as selection
+    seen=[]
+    def score(source,target,output,contrast=False):
+        if contrast:seen.append(output['n'])
+        return {'total':float(output['n'])}
+    monkeypatch.setattr(selection,'score',score)
+    monkeypatch.setattr(selection,'_passes',lambda *a:True)
+    monkeypatch.setattr(selection,'_safest',lambda a,b,p:p)
+    pool=[{'n':i} for i in range(12)]
+    assert selection.select({}, {}, pool,render_limit=3)=={'n':11}
+    assert seen==[11,10,9]
+    seen.clear();selection.select({}, {}, pool)
+    assert len(seen)==selection.RENDER_TOP==10

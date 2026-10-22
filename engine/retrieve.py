@@ -46,7 +46,7 @@ def library():
         return []
 
 
-def retrieved(a, sizer, tw, th, deadline=None):
+def retrieved(a, sizer, tw, th, deadline=None, *, limit=None):
     """Up to TOP_K plans, one per retrieved design, best composition match first; none
     more once `deadline` (now()) has passed. None when switched off (see module doc)."""
     if os.environ.get("CHAMELEON_RETRIEVAL", "1") == "0":
@@ -60,7 +60,7 @@ def retrieved(a, sizer, tw, th, deadline=None):
                              abs(math.log(d["aspect"]) - want)))
     flow = [u for u in a.units.values() if not u.floating and not u.host]
     plans = []
-    for rank, d in enumerate(near[:TOP_K]):
+    for rank, d in enumerate(near[:TOP_K if limit is None else min(TOP_K, limit)]):
         if deadline is not None and now() > deadline:
             log.info("time budget reached after %d retrieved layouts", rank)
             break

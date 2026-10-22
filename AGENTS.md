@@ -20,7 +20,7 @@ Build a small source-conditioned, group-level layout generator for an offline la
 - export TMPDIR=/Volumes/Extreme/AdobeHackathon/tmp before running anything.
 
 ## Rules
-1. Work only inside chameleon-int (and the data folder above). Never edit either chameleon or chameleon-gen, including their engine/ files. Work only on gen-integration, branched from rules; never merge or change other branches or tags. Engine changes here are limited to a new engine/gen_candidates.py, one minimal candidate-pool hook, the requested count-based determinism fix, and tests/evaluation scripts. Do not change the scorer or its weights or make other behavior changes. GEN_OFF=1 must preserve the legacy rules path; the generator is ON by default here.
+1. Work only inside chameleon-int (and the data folder above). Never edit either chameleon or chameleon-gen, including their engine/ files. Work only on gen-integration, branched from rules; never merge or change other branches or tags. Engine changes here are limited to a new engine/gen_candidates.py, one minimal candidate-pool hook, the requested count-based determinism fix, and tests/evaluation scripts. Do not change the scorer or its weights or make other behavior changes. GEN_OFF=1 disables generator proposals but retains the calibrated count budgets; the generator is ON by default here. The user explicitly authorized this change from rules behavior.
 2. The human labels are a TEST SET. Never train on them, tune on them, or copy them. Read them only for evaluation.
 3. No leakage. Designs that appear in any label file, the dev or holdout suites, or the benchmark must be excluded from training. Reuse the exclusion logic in critic/make_data.py, and also dedupe the training split against those designs by element structure and text overlap (same campaign in other formats).
 4. Determinism: seed everything (python, numpy, torch), log the seeds, and make data ordering reproducible.
@@ -43,3 +43,5 @@ Short. What ran, the numbers, what failed, what you need from me. No recaps.
 - Stop and report any conflict between the requested behavior and the existing repo instead of guessing.
 
 - User resolved repair scope: use existing fit/check/local repair only. Leave CP-SAT preserve candidates unchanged; no generator CP-SAT projection. Report hard-rule passes after local repair for all 16 samples by aspect-change bucket, including rejected/deduplicated samples in the diagnostic denominator.
+
+- Latest user budget: calibrate recipe/retrieval/realization caps from per-operation costs on all 600 dev cases; K=6 worst case must be at most 10 CPU seconds on this Mac. Compare capped GEN_OFF and enabled scores to original rules. Historical flag-off equivalence uses identical recorded clocks, with the two ordinary-clock mismatches retained. Report K=4/6/8 time and candidate recall, 40-case repeats under 2x CPU load, all-16 pass rates and recall3.

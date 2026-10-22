@@ -28,7 +28,7 @@ PREFER_MARGIN = 2.0  # points out of 100: "clearly better" than the preferred ca
 log = logging.getLogger(__name__)
 
 
-def select(source, target, outputs, preferred=None, deadline=None):
+def select(source, target, outputs, preferred=None, deadline=None, *, render_limit=None):
     pref_key = json.dumps(preferred, sort_keys=True) if preferred is not None else None
     bonus = lambda o: PREFER_MARGIN if pref_key and json.dumps(o, sort_keys=True) == pref_key else 0.0
     seen, unique = set(), []
@@ -41,7 +41,7 @@ def select(source, target, outputs, preferred=None, deadline=None):
     passing = [(o, score(source, target, o)["total"] + bonus(o)) for o in unique if _passes(source, target, o)]
     passing = _safest(source, target, passing)
     if passing:
-        top = sorted(passing, key=lambda t: -t[1])[:RENDER_TOP]
+        top = sorted(passing, key=lambda t: -t[1])[:RENDER_TOP if render_limit is None else min(RENDER_TOP, render_limit)]
         best, rendered = top[0][0], []
         try:
             for o, _s in top:  # best geometric first; past the deadline, only what is already rendered counts

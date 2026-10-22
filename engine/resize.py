@@ -6,7 +6,7 @@ that, to a repaired stretch. When the aspect ratio barely changes, the uniform
 scale is also the preferred candidate: the designer's layout already fits.
 
 Enabled mode uses a fixed realization budget and no elapsed-time selection gates.
-GEN_OFF=1 retains the legacy wall-clock budget (BUDGET_S). Both retain the guard
+GEN_OFF=1 disables generator proposals while retaining count budgets. Both retain the guard
 that drops retrieved layouts which shrink the headline or main image excessively.
 
 CHAMELEON_CRITIC=1 adds a hill-climbing search (engine.search) after selection, judged by the trained
@@ -34,42 +34,43 @@ SELECT_COST = 5     # ...and realising stops while the rest still covers judging
                     # and select check, score and test legibility of each, about this many times (measured as we go)
 GUARD = 0.7         # a retrieved layout must give the headline and main image at least this share of the best recipe's
 SEARCH_END_S = 12.5  # CHAMELEON_CRITIC=1: the search stops this long after the start (the brief's budget: 13.5 s)
-FIXED_CANDIDATES = 24  # enabled: fixed realization budget, independent of machine speed
+RECIPE_CANDIDATES = 4  # total recipe attempts; measured on all 600 dev cases
+RETRIEVAL_CANDIDATES = 4  # total across analyses
+CONTRAST_CANDIDATES = 3
+FIXED_CANDIDATES = 16  # enabled: fixed realization budget, independent of machine speed
 SEARCH_STARTS = 3    # ...starting from the chosen layout, this many other best candidates and the best preserve layout
 log = logging.getLogger(__name__)
 
 
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
     target = {"width": int(target_canvas["width"]), "height": int(target_canvas["height"])}
-    start = now()
     generator_on = os.environ.get("GEN_OFF") != "1"
-    deadline = None if generator_on else start + BUDGET_S
+    deadline = None
     try:
         # tight groups held rigid (engine.analyze) and, when that changed the units, also free: the scorer picks
         tight, plain = analyze(source), analyze(source, tight=False)
         pool = [tight] + ([plain] if plain.units.keys() != tight.units.keys() else [])
-        outputs, recipes, made_by, per = [], [], [], 0.0
-        plans = _alternate([_plans(x, target, None if generator_on else start + GEN_SHARE * BUDGET_S) for x in pool])
+        outputs, recipes, made_by = [], [], []
+        # Recipe work uses the tight analysis; both analyses retain all existing
+        # preserve plans and split the fixed retrieval quota. No generated plan
+        # is discarded merely because the analyses have different family counts.
+        streams = [_plans(x, target, None, recipes=RECIPE_CANDIDATES if i == 0 else 0,
+                          retrieval=(RETRIEVAL_CANDIDATES + len(pool) - 1 - i) // len(pool))
+                   for i, x in enumerate(pool)]
+        plans = (item for row in zip_longest(*streams) for item in row if item is not None)
         for a, plan in plans:
-            if generator_on and len(outputs) >= FIXED_CANDIDATES:
-                break
-            if not generator_on and outputs and now() + SELECT_COST * per * len(outputs) > deadline:
-                log.info("time budget reached after %d candidates", len(outputs))
+            if len(outputs) >= FIXED_CANDIDATES:
                 break
             # stand-out floating units: centred in their free space, or near their source side; the scorer picks
             focal = (True, False) if any(a.units[u].emphasis for u in plan.floating) else (True,)
             # text kept on a panel that can't grow by shrinking it, or left overhanging: an extra candidate, not a replacement
             for f, k in [(f, k) for f in focal for k in ((True, False) if a.panels else (True,))]:
-                if generator_on and len(outputs) >= FIXED_CANDIDATES:
+                if len(outputs) >= FIXED_CANDIDATES:
                     break
                 try:
                     outputs.append(realize(a, plan, target["width"], target["height"], focal=f, keep_on_panel=k))
                     recipes.append(plan.recipe)
                     made_by.append(a)
-                    if not generator_on and len(outputs) <= 2:  # what judging one candidate costs on this machine (the second: the first warms the source's caches)
-                        t = now()
-                        _passes(source, target, outputs[-1]) and score(source, target, outputs[-1])
-                        per = now() - t
                 except Exception:
                     log.exception("recipe %s %s failed", plan.recipe, plan.knobs)
         if generator_on:
@@ -90,7 +91,7 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
         made_by = {id(o): x for o, x in zip(outputs, made_by)}
         outputs, recipes = _guard(source, target, outputs, recipes)
         if outputs or preferred is not None:
-            best = select(source, target, outputs, preferred, deadline)
+            best = select(source, target, outputs, preferred, deadline, render_limit=CONTRAST_CANDIDATES)
             if generator_on:
                 from engine.gen_candidates import LAST
                 LAST["won_selection"] = any(o is best for o in generated)
@@ -102,7 +103,7 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                     outputs, recipes = outputs + [win], recipes + ["finished"]
                 best = win
             if os.environ.get("CHAMELEON_CRITIC") == "1" and any(o is best for o in outputs):
-                best = _critic_search(source, target, a, outputs, recipes, best, None if generator_on else min(deadline, start + SEARCH_END_S))
+                best = _critic_search(source, target, a, outputs, recipes, best, None)
                 if not any(o is best for o in outputs):
                     outputs, recipes = outputs + [best], recipes + ["searched"]
             log.info("winner: %s", next((r for o, r in zip(outputs, recipes) if o is best),
@@ -118,8 +119,9 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
         return _stretch(source, target)
 
 
-def _plans(a, target, until):
-    plans = generate(a, target["width"], target["height"], until)
+def _plans(a, target, until, *, recipes=RECIPE_CANDIDATES, retrieval=RETRIEVAL_CANDIDATES):
+    plans = generate(a, target["width"], target["height"], until,
+                     recipe_limit=recipes, retrieval_limit=retrieval)
     if until is None:
         # Fixed round-robin across recipe families retains preserve/retrieval.
         # Solver settings, plans themselves and the scorer are unchanged.
