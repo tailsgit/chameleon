@@ -5,14 +5,8 @@ import math
 import shutil
 from pathlib import Path
 import numpy as np
-import pyarrow.parquet as pq
-from generator.download import digest
-from generator.make_data import DATA, atomic_json
-from generator.pair_data import cached_rows, PHASE1
-from generator.partial_pairs import ROOT as PARTIAL, bucket, BUCKETS
-from generator.phase2b import ROOT as PREVIOUS
-from generator.verify_data import verify as verify_leakage
 
+DATA = Path(__file__).resolve().parents[2] / "data"
 ROOT = DATA / "generator" / "phase3"
 RUNS = DATA / "generator" / "runs"
 MAX_GROUPS = 40
@@ -25,6 +19,9 @@ ROLES = ["background", "panel", "headline", "subhead", "body", "fineprint", "cta
 SOURCES = ["stretch", "whole_fit", "engine", "real", "real_strict"]
 
 def files() -> list[Path]:
+    from generator.download import digest
+    from generator.partial_pairs import ROOT as PARTIAL
+    from generator.phase2b import ROOT as PREVIOUS
     manifest = json.loads((PREVIOUS / "manifest.json").read_text())
     result = []
     for item in manifest["shards"]:
@@ -49,6 +46,12 @@ def canvases(row: dict) -> list[float]:
             math.log((b[0]/b[1])/(a[0]/a[1]))]
 
 def prepare() -> None:
+    import pyarrow.parquet as pq
+    from generator.download import digest
+    from generator.make_data import atomic_json
+    from generator.pair_data import cached_rows, PHASE1
+    from generator.partial_pairs import bucket, BUCKETS
+    from generator.verify_data import verify as verify_leakage
     ROOT.mkdir(parents=True, exist_ok=True)
     paths = files(); fingerprints = {str(p): digest(p) for p in paths}
     dest = ROOT / "features"

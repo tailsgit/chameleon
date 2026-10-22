@@ -1,0 +1,44 @@
+"""Focused integration contracts, independent of renderer and Crello content."""
+import subprocess
+import sys
+
+import numpy as np
+
+from engine.gen_candidates import features, project, geometry_cost, runtime
+from generator.features import continuous, canvases
+from generator.group_features import group_features
+from generator.extract import group_features as training_group_features
+
+
+def group(kind='rigid', aspect=2.):
+    return dict(kind=kind, role='hero', box=[.1,.2,.3,.4], aspect=aspect,
+                types=['image'],image_aspects=[2.],char_count=0,area_share=.12,
+                z_order=0,parts=[],cols=0,floating=False,members=[0])
+
+
+def test_shared_builders_and_padding():
+    g=[group()]; a={'width':100,'height':200}; b={'width':300,'height':100}
+    x=features(g,a,b)
+    assert training_group_features is group_features
+    np.testing.assert_array_equal(x['cont'][0,0],np.asarray(continuous(g[0]),np.float32))
+    np.testing.assert_array_equal(x['canvas'][0],np.asarray(canvases({'canvas_a':[100,200],'canvas_b':[300,100]}),np.float32))
+    assert x['source'].tolist()==[3]
+    assert not x['cont'][0,1:].any() and not x['valid'][0,1:].any()
+
+
+def test_projection_bounds_and_rigid_aspect():
+    groups=[group(),group('background'),group('flow_text')]
+    boxes=np.array([[-.4,.8,2.,1.],[-2,0,3,3],[.9,-.2,.8,.4]])
+    p=project(groups,boxes,300,100)
+    assert np.all(p[:,:2]>=0) and np.all(p[:,:2]+p[:,2:]<=1+1e-12)
+    assert abs((p[0,2]*300)/(p[0,3]*100)-2)<1e-10
+    np.testing.assert_array_equal(p[1],[0,0,1,1])
+    assert geometry_cost(groups,p)>=0
+
+
+def test_runtime_no_torch_or_pyarrow():
+    code='import sys; from engine.gen_candidates import runtime; runtime(); assert "torch" not in sys.modules; assert "pyarrow" not in sys.modules'
+    subprocess.run([sys.executable,'-c',code],check=True)
+    sess,meta=runtime()
+    assert sess.get_session_options().intra_op_num_threads==1
+    assert len(meta['fixed_latents'])==16

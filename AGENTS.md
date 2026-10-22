@@ -41,3 +41,5 @@ Short. What ran, the numbers, what failed, what you need from me. No recaps.
 - Runtime uses onnxruntime CPU, one thread, the exported fixed latent table and source_kind real; reuse the training feature builder.
 - Keep both reference checkouts read only. No training or label changes. Test-only recall previews are authorized evaluation artifacts; never commit them.
 - Stop and report any conflict between the requested behavior and the existing repo instead of guessing.
+
+- User resolved repair scope: use existing fit/check/local repair only. Leave CP-SAT preserve candidates unchanged; no generator CP-SAT projection. Report hard-rule passes after local repair for all 16 samples by aspect-change bucket, including rejected/deduplicated samples in the diagnostic denominator.
