@@ -91,3 +91,46 @@ coverage, and Phase 1 exclusion/campaign leakage. For a fresh validation-only
 reproduction, run `python -m generator.build_pairs --split val --out <qa-path>`
 and compare the validation Parquet checksums. Only the focused tests under
 `generator/tests` are needed; do not run repository benchmarks or the full suite.
+
+## Phase 2b
+
+The versioned `data/generator/phase2b` dataset adds `source_kind` to every pair:
+`stretch`, `whole_fit`, `engine`, or `real`. The manifest declares `real` as the
+future inference token. No model code or training is part of these commands.
+The old 300-case engine diagnostic is excluded from this dataset.
+
+- `python -m generator.reflow_data --workers 4`: choose 3,000 train and 300 val
+  designs using seeded, balanced round-robin sampling across native format labels.
+  Use the previous seeded schedule's first source canvas for each design.
+  Four processes supervise at most four concurrent reflows, each killed after
+  20 seconds. Timed-out and fewer-than-two-group outputs are omitted and counted.
+  Case outputs are checkpointed; completed shard directories are never replaced.
+  Every shard records the engine commit, checkout commit, UTC creation date,
+  seed, input-plan/code hashes, and Parquet checksum. Reflows use cached outputs
+  as the source of truth: fresh reruns may differ because engine search is timed.
+- `python -m generator.real_pairs`: reproduce the 18,492 unordered cross-format
+  candidates from Phase 2, then require complete, unique group correspondence.
+  Keep the hashed-ID order as one canonical direction per unordered candidate;
+  do not double the count by emitting both directions. Group kind, role and
+  element-type multiset must agree. Text groups require equal multisets of full
+  NFKC/casefold/whitespace-normalized text hashes. Image members must have equal
+  relative stacking-order ranks, and each corresponding aspect ratio must differ
+  by at most a factor of 1.25. Missing or ambiguous assignments reject the whole
+  pair. Every group, including backgrounds and panels, must participate exactly
+  once. Distinct native formats with equal canvas sizes are retained and counted.
+  All conversion and unchanged engine analysis happen in RAM; only hashed text
+  descriptors and sanitized geometry are cached. The output includes ten plain
+  geometry tables in `matched_examples.md` and per-role match/retention rates.
+- `python -m generator.pack_pairs`: create new cheap shards with `source_kind`
+  and verify that every prior field remains equal. The Phase 2 cache is untouched.
+- `python -m generator.audit_phase2b`: check exclusion/split leakage, immutable
+  shard checksums/provenance, all four source kinds, exact real and engine target
+  boxes, overflow flags, fixed reflow-plan membership, and pair uniqueness.
+  An independent alternating-cycle check rejects ambiguous real assignments.
+  Write `manifest.json` and `report.json`, including train/val counts and the
+  median per-pair normalized box L1 for each source kind.
+
+Run the jobs under `caffeinate -i`, with seed 2026 and logs under Phase 2b.
+Completed shards are verified and reused on resume, never overwritten; incomplete
+publication directories may be rebuilt. Do not install packages, use network,
+change `engine/`, or start Phase 3 as part of this workflow.
