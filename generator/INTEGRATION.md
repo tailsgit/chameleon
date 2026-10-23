@@ -53,6 +53,55 @@ tables, and all case IDs are outside git at `data/generator/integration/`.
 Completed per-case result files are immutable and validate their engine-code
 fingerprint; use a new mode name after source changes.
 
+## Final cap-tuning pass
+
+K=8 and the contrast cap of 3 stayed fixed. Trials used the same 600 dev cases,
+seed 2026, four workers, full-resize process CPU time and committed rules CSV
+scores. The current normal measurement below is the accepted pre-tuning run.
+Recovery means a former caps-sufficient regression now drops at most 10 points;
+the same original 15-case set is used for both trials.
+
+| Recipe / retrieval / base caps | Normal CPU p50 / p95 / max, s | Mean score vs rules | Drops >10 | Recovered /15 |
+|---|---|---|---|---|
+| 4 / 4 / 16 | 1.613 / 3.968 / 7.165 | -0.6749 | 24 | 0 |
+| 6 / 6 / 24 | 1.749 / 4.289 / 8.344 | -0.4749 | 20 | 4 |
+| 8 / 8 / 32 | 2.063 / 4.895 / 10.187 | -0.3619 | 19 | 5 |
+
+Under doubled load (four workers plus four CPU burns), all 600 cases measured
+2.982 / 7.566 / 14.445 s with current caps, and 3.142 / 7.649 / 15.913 s at
+1.5x caps. Both loaded runs have zero output-byte mismatches against their normal
+runs. No loaded 2x-cap trial was needed after its normal maximum exceeded 9 s.
+
+**Retain current caps. No tested setting meets both the new normal <=9 s and
+loaded <=12 s gates.** The 1.5x score gain is real, but misses the loaded limit;
+2x misses the normal limit. This pass does not claim the loaded timing gate
+passed, or change the scorer, preserve solver, generator, or recall candidates.
+Further tightening was not part of this requested loosening pass.
+
+Fresh final checks: 40 cases twice normally and once under doubled load have
+zero output-byte and candidate-pool mismatches. The loaded 40-case maximum is
+9.667 s; this smaller suite passes 12 s, while the full 600-case loaded suite
+fails. All 10 focused tests pass. Recall3 was not regenerated: engine/caps are
+unchanged, all 40 saved outputs and markers match, 352 referenced images and
+JavaScript syntax verify. It retains 14 generator winners and 38 unique
+contributions.
+
+A reporting-only failure after the first 40-case run (`KeyError: delta`) came
+from mixed dev-CSV baseline coverage in the recall suite. Optional summary
+metrics now require all rows to contain them; every case and byte comparison
+is retained. A focused regression test covers this case.
+
+Reproduce a trial with, for example:
+
+```sh
+PYTHONHASHSEED=2026 caffeinate -i /Volumes/Extreme/AdobeHackathon/chameleon/.venv/bin/python -m eval.gen_budget_eval NEW_MODE --caps 6 6 24 --k 8 --jobs 4
+```
+
+Add `--load` for doubled load. Use a fresh mode name for each immutable trial.
+`python -m eval.gen_cap_tuning eval_dev8_v3 tune_1p5_normal tune_2_normal`
+rebuilds the score/recovery comparison. Detailed trial data, recovered case IDs,
+and the final verification report stay under `data/generator/integration/`.
+
 ## Labeling
 
 Recall3 has the same 40 cases/order as recall2. It marks **GENERATOR WON** cases

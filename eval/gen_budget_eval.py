@@ -83,7 +83,8 @@ def committed_scores() -> dict:
 
 
 def one(job:tuple)->dict:
-    setup();mode,index,case,k,version=job
+    setup();mode,index,case,k,version,*extra=job
+    caps=extra[0] if extra else None
     name,sample,fmt,target,source=case
     os.environ['CHAMELEON_ASSETS']=str(REPO.parent/'data/crello_chameleon/assets' if sample.startswith('crello_') else REPO/'brand_kit/assets')
     dest=OUT/mode/f'{index:04d}.json'
@@ -100,6 +101,8 @@ def one(job:tuple)->dict:
     os.environ.pop('GEN_OFF',None);os.environ['GEN_K']=str(k)
     # All measurements include full resize; diagnostics and reference run are outside.
     R=importlib.import_module('engine.resize');base=[]
+    if caps is not None:
+        R.RECIPE_CANDIDATES,R.RETRIEVAL_CANDIDATES,R.FIXED_CANDIDATES=caps
     with operations() as measured:
         real=R.realize
         def capture(*args,**kwargs):
@@ -118,6 +121,11 @@ def one(job:tuple)->dict:
     unique=[]
     for value,_,o in ranked:
         if all(gen.layout_distance(o,q)>=.08 for q in unique):unique.append(o)
+    row['pool_sha']=hashlib.sha256(json.dumps(sorted(canonical(o) for o in fixed_pool)).encode()).hexdigest()
+    row['caps']=caps
+    if caps is not None and name in committed_scores():
+        row['rules_score']=float(committed_scores()[name]['total'])
+        row['delta']=row['score']-row['rules_score']
     row['pool_distinct']=len(unique)
     row['best_pool_score']=ranked[0][0] if ranked else None
     if mode.startswith('eval'):
@@ -145,12 +153,13 @@ def summary(rows:list)->dict:
     if rows and 'identical' in rows[0]:
         out['identical']=sum(r['identical'] for r in rows);return out
     for key in ['cpu_s','wall_s','score','delta','off_delta','pool_distinct']:
-        if key not in rows[0]:continue
+        if not all(key in r for r in rows):continue
         a=np.array([r[key] for r in rows]);out[key]=dict(mean=float(a.mean()),p50=float(np.median(a)),p95=float(np.quantile(a,.95)),max=float(a.max()))
     out.update(generator_pass_cases=sum(r['candidate_pass'] for r in rows),generator_wins=sum(r['gen_won'] for r in rows),
                unique_cases=sum(r['generator'].get('new_unique',0)>0 for r in rows),final_pass=sum(r['passed'] for r in rows))
-    if 'delta' in rows[0]:
-        out['regressions']=[dict(case=r['case'],delta=r['delta'],off_delta=r['off_delta']) for r in rows if r['delta'] < -10]
+    if all('delta' in r for r in rows):
+        out['regressions']=[dict(case=r['case'],delta=r['delta'],off_delta=r.get('off_delta')) for r in rows if r['delta'] < -10]
+    if 'all16' in rows[0]:
         out['off_regressions']=[dict(case=r['case'],delta=r['off_delta']) for r in rows if r['off_delta'] < -10]
         out['all16']={}
         for b in ['<0.1','0.1-0.5','0.5-1','>1']:
@@ -174,7 +183,10 @@ def burn()->None:
 def main()->None:
     p=argparse.ArgumentParser();p.add_argument('mode');p.add_argument('--suite',choices=['dev','recall'],default='dev')
     p.add_argument('--n',type=int,default=0);p.add_argument('--k',type=int,default=6);p.add_argument('--jobs',type=int,default=4);p.add_argument('--load',action='store_true')
-    a=p.parse_args();setup();chosen=cases(a.suite)[:a.n or None];version=snapshot();work=[(a.mode,i,c,a.k,version) for i,c in enumerate(chosen)]
+    p.add_argument('--caps',type=int,nargs=3,metavar=('RECIPES','RETRIEVAL','REALIZATIONS'))
+    a=p.parse_args();setup();chosen=cases(a.suite)[:a.n or None]
+    version=hashlib.sha256((snapshot()+json.dumps(dict(caps=a.caps,k=a.k,load=a.load))).encode()).hexdigest()
+    work=[(a.mode,i,c,a.k,version,a.caps) for i,c in enumerate(chosen)]
     burns=[]
     if a.load:
         import multiprocessing
