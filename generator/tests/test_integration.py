@@ -112,20 +112,25 @@ def test_default_resize_never_imports_generator_or_loads_model():
 import builtins,json,sys
 from pathlib import Path
 original_import=builtins.__import__
+blocked=[]
 def guarded_import(name,*args,**kwargs):
-    assert not name.startswith('onnxruntime'), 'default imported onnxruntime'
-    assert not name.startswith('engine.gen_candidates'), 'default imported generator'
+    if name.startswith(('onnxruntime','engine.gen_candidates')):
+        blocked.append(name)
+        raise AssertionError('default attempted generator import')
     return original_import(name,*args,**kwargs)
 builtins.__import__=guarded_import
 read=Path.read_bytes
 def guarded_read(path,*args,**kwargs):
-    assert path.name not in ('generator.onnx','interface.json'), 'default read generator model metadata'
+    if path.name in ('generator.onnx','interface.json'):
+        blocked.append(str(path))
+        raise AssertionError('default attempted model read')
     return read(path,*args,**kwargs)
 Path.read_bytes=guarded_read
 from engine.resize import resize
 source=json.loads(Path('input/chameleon_sample_level1_warmup.json').read_text())['source']
 out=resize(source,{'width':600,'height':200})
 assert len(out['elements'])==len(source['elements'])
+assert not blocked, blocked
 assert 'onnxruntime' not in sys.modules and 'engine.gen_candidates' not in sys.modules
 print('default: onnxruntime=False, generator=False, model_reads=0')
 """

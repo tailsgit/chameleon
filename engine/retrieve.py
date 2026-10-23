@@ -46,7 +46,7 @@ def library():
         return []
 
 
-def retrieved(a, sizer, tw, th, deadline=None, *, limit=None):
+def retrieved(a, sizer, tw, th, deadline=None, *, limit=None, spread=False):
     """Up to TOP_K plans, one per retrieved design, best composition match first; none
     more once `deadline` (now()) has passed. None when switched off (see module doc)."""
     if os.environ.get("CHAMELEON_RETRIEVAL", "1") == "0":
@@ -60,7 +60,21 @@ def retrieved(a, sizer, tw, th, deadline=None, *, limit=None):
                              abs(math.log(d["aspect"]) - want)))
     flow = [u for u in a.units.values() if not u.floating and not u.host]
     plans = []
-    for rank, d in enumerate(near[:TOP_K if limit is None else min(TOP_K, limit)]):
+    ranked = list(enumerate(near[:TOP_K]))
+    if spread and limit is not None and 0 < limit < len(ranked):
+        # Fixed rank strata do not shift when fewer than TOP_K entries are near.
+        # Include the best match, then each stratum's far edge; fill vacant tail
+        # strata from the head. Seven representatives span five-rank bands.
+        stride = math.ceil(TOP_K / (limit - 1)) if limit > 1 else TOP_K
+        positions = {0} | {min(i * stride - 1, len(ranked) - 1) for i in range(1, limit)}
+        for i in range(len(ranked)):
+            if len(positions) >= limit:
+                break
+            positions.add(i)
+        ranked = [ranked[i] for i in sorted(positions)]
+    elif limit is not None:
+        ranked = ranked[:max(0, limit)]
+    for rank, d in ranked:
         if deadline is not None and now() > deadline:
             log.info("time budget reached after %d retrieved layouts", rank)
             break

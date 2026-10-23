@@ -74,7 +74,7 @@ class Plan:
     sizer: Sizer = field(repr=False, default=None)
 
 
-def generate(a, tw, th, deadline=None, *, recipe_limit=None, retrieval_limit=None):
+def generate(a, tw, th, deadline=None, *, recipe_limit=None, retrieval_limit=None, tasks_only=False):
     """All candidate plans for one task: every applicable recipe x its knob grid, then the
     retrieved layouts. Past `deadline` (now()), nothing more is added."""
     sizer = Sizer(a, tw, th)
@@ -85,7 +85,7 @@ def generate(a, tw, th, deadline=None, *, recipe_limit=None, retrieval_limit=Non
     plans, cut, tasks = [], [], {}
 
     def add(fn, name, **knobs):
-        if recipe_limit is not None:
+        if tasks_only or recipe_limit is not None:
             tasks.setdefault(name, []).append((fn, name, knobs))
             return
         if plans and deadline is not None and now() > deadline:
@@ -126,6 +126,8 @@ def generate(a, tw, th, deadline=None, *, recipe_limit=None, retrieval_limit=Non
                 add(strip, "compact", hero_pos="left", img_mult=1.0, align=align, cap=cap, primaries_only=True)
             else:
                 add(stack, "compact", align=align, vjust="spread", img_mult=1.0, cap=cap, order="source", primaries_only=True)
+    if tasks_only:
+        return tasks
     if recipe_limit is not None:
         from itertools import zip_longest, islice
         queue = (task for row in zip_longest(*tasks.values()) for task in row if task is not None)

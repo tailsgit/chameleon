@@ -34,10 +34,10 @@ SELECT_COST = 5     # ...and realising stops while the rest still covers judging
                     # and select check, score and test legibility of each, about this many times (measured as we go)
 GUARD = 0.7         # a retrieved layout must give the headline and main image at least this share of the best recipe's
 SEARCH_END_S = 12.5  # CHAMELEON_CRITIC=1: the search stops this long after the start (the brief's budget: 13.5 s)
-RECIPE_CANDIDATES = 4  # total recipe attempts; measured on all 600 dev cases
-RETRIEVAL_CANDIDATES = 4  # total across analyses
+RECIPE_CANDIDATES = 1  # guaranteed representative per applicable recipe family
+RETRIEVAL_CANDIDATES = 7  # stratified representatives across the existing top 30
 CONTRAST_CANDIDATES = 3
-FIXED_CANDIDATES = 16  # enabled: fixed realization budget, independent of machine speed
+FIXED_CANDIDATES = 4  # shared extra realizations after all path minima
 SEARCH_STARTS = 3    # ...starting from the chosen layout, this many other best candidates and the best preserve layout
 log = logging.getLogger(__name__)
 
@@ -51,28 +51,16 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
         tight, plain = analyze(source), analyze(source, tight=False)
         pool = [tight] + ([plain] if plain.units.keys() != tight.units.keys() else [])
         outputs, recipes, made_by = [], [], []
-        # Recipe work uses the tight analysis; both analyses retain all existing
-        # preserve plans and split the fixed retrieval quota. No generated plan
-        # is discarded merely because the analyses have different family counts.
-        streams = [_plans(x, target, None, recipes=RECIPE_CANDIDATES if i == 0 else 0,
-                          retrieval=(RETRIEVAL_CANDIDATES + len(pool) - 1 - i) // len(pool))
-                   for i, x in enumerate(pool)]
-        plans = (item for row in zip_longest(*streams) for item in row if item is not None)
-        for a, plan in plans:
-            if len(outputs) >= FIXED_CANDIDATES:
-                break
-            # stand-out floating units: centred in their free space, or near their source side; the scorer picks
-            focal = (True, False) if any(a.units[u].emphasis for u in plan.floating) else (True,)
-            # text kept on a panel that can't grow by shrinking it, or left overhanging: an extra candidate, not a replacement
-            for f, k in [(f, k) for f in focal for k in ((True, False) if a.panels else (True,))]:
-                if len(outputs) >= FIXED_CANDIDATES:
-                    break
-                try:
-                    outputs.append(realize(a, plan, target["width"], target["height"], focal=f, keep_on_panel=k))
-                    recipes.append(plan.recipe)
-                    made_by.append(a)
-                except Exception:
-                    log.exception("recipe %s %s failed", plan.recipe, plan.knobs)
+        from engine.candidate_budget import schedule
+        for a, plan, f, k in schedule(pool, target, recipe_min=RECIPE_CANDIDATES,
+                                      retrieval_min=RETRIEVAL_CANDIDATES,
+                                      extra=FIXED_CANDIDATES):
+            try:
+                outputs.append(realize(a, plan, target["width"], target["height"], focal=f, keep_on_panel=k))
+                recipes.append(plan.recipe)
+                made_by.append(a)
+            except Exception:
+                log.exception("recipe %s %s failed", plan.recipe, plan.knobs)
         if generator_on:
             from engine.gen_candidates import candidates, LAST, layout_distance
             try:
