@@ -93,3 +93,43 @@ def test_rigid_member_visibility_floor_and_canvas_bounds():
     small=rigid_slot(sizer,u,np.array([.1,.1,.01,.01]),100,20)
     assert small.w<=100 and small.h<=20
     assert abs(small.w/small.h-u.w/u.h)<1e-12
+
+
+def test_generator_switch_is_explicit_opt_in(monkeypatch):
+    from engine.gen_candidates import enabled
+    monkeypatch.delenv('GEN_ON', raising=False)
+    monkeypatch.delenv('GEN_OFF', raising=False)
+    assert not enabled()
+    monkeypatch.setenv('GEN_ON', '1')
+    assert enabled()
+    monkeypatch.setenv('GEN_OFF', '1')
+    assert not enabled()
+
+
+def test_default_resize_never_imports_generator_or_loads_model():
+    import os
+    code = r"""
+import builtins,json,sys
+from pathlib import Path
+original_import=builtins.__import__
+def guarded_import(name,*args,**kwargs):
+    assert not name.startswith('onnxruntime'), 'default imported onnxruntime'
+    assert not name.startswith('engine.gen_candidates'), 'default imported generator'
+    return original_import(name,*args,**kwargs)
+builtins.__import__=guarded_import
+read=Path.read_bytes
+def guarded_read(path,*args,**kwargs):
+    assert path.name not in ('generator.onnx','interface.json'), 'default read generator model metadata'
+    return read(path,*args,**kwargs)
+Path.read_bytes=guarded_read
+from engine.resize import resize
+source=json.loads(Path('input/chameleon_sample_level1_warmup.json').read_text())['source']
+out=resize(source,{'width':600,'height':200})
+assert len(out['elements'])==len(source['elements'])
+assert 'onnxruntime' not in sys.modules and 'engine.gen_candidates' not in sys.modules
+print('default: onnxruntime=False, generator=False, model_reads=0')
+"""
+    env=dict(os.environ)
+    env.pop('GEN_ON', None)
+    env.pop('GEN_OFF', None)
+    subprocess.run([sys.executable,'-c',code],env=env,check=True)

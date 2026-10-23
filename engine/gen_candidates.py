@@ -29,7 +29,7 @@ LAST: dict[str, Any] = {}
 
 
 def enabled() -> bool:
-    return os.environ.get('GEN_OFF') != '1'
+    return os.environ.get('GEN_ON') == '1' and os.environ.get('GEN_OFF') != '1'
 
 
 @lru_cache(maxsize=1)

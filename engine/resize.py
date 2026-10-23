@@ -6,7 +6,7 @@ that, to a repaired stretch. When the aspect ratio barely changes, the uniform
 scale is also the preferred candidate: the designer's layout already fits.
 
 Enabled mode uses a fixed realization budget and no elapsed-time selection gates.
-GEN_OFF=1 disables generator proposals while retaining count budgets. Both retain the guard
+Generator proposals are opt-in with GEN_ON=1; GEN_OFF=1 overrides it. Both retain the guard
 that drops retrieved layouts which shrink the headline or main image excessively.
 
 CHAMELEON_CRITIC=1 adds a hill-climbing search (engine.search) after selection, judged by the trained
@@ -44,7 +44,7 @@ log = logging.getLogger(__name__)
 
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
     target = {"width": int(target_canvas["width"]), "height": int(target_canvas["height"])}
-    generator_on = os.environ.get("GEN_OFF") != "1"
+    generator_on = os.environ.get("GEN_ON") == "1" and os.environ.get("GEN_OFF") != "1"
     deadline = None
     try:
         # tight groups held rigid (engine.analyze) and, when that changed the units, also free: the scorer picks
