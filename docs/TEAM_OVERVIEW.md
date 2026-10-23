@@ -8,9 +8,9 @@ Given a design JSON and a target canvas, return the same elements arranged for t
 
 Keep element IDs and counts, text content, font family, assets and styling unchanged. The intended edits are `x`, `y`, `width`, `height` and `font_size`. Everything must remain visible and on the canvas; ordinary images keep their proportions within about 5%. No regenerated pixels or replacement assets. There is no editable crop/focal-point field: existing `fit: cover` backgrounds may use the renderer’s centred crop; other images must preserve their aspect. The README also documents scaled letter spacing and mirrored rotation as legacy assumptions—confirm those interpretations before submission.
 
-Run offline in a CPU-only Docker container with `--network none`. Deterministic means the same input produces exactly the same output. Our engineering target is about **13.5 CPU seconds per case**; the reference image was about **331 MB**. These are project measurements/targets, not newly verified limits. `RULES.md` explicitly says latency is **not disqualifying for stage one**. Reference hardware is described as Apple M5 Pro, with exact limits still unconfirmed.
+Run offline in a CPU-only Docker container with `--network none`. Deterministic means the same input produces exactly the same output. **Stage 1 has no hard execution-time limit**, per the challenge PDF (owner-confirmed) and `RULES.md:11`; speed and reliability remain a rubric row. A slow engine may still time out on the **Apple M5 Pro reference machine** (`RULES.md:32`), whose exact CPU/RAM/disk limits remain unconfirmed. Our **13.5 CPU seconds per case** is an engineering target, not an official cutoff; **331 MB** is a historical image-size measurement.
 
-Both structural JSON checks and an **AI visual judge** matter: a valid JSON can still look bad. Any learned weights must be publicly accessible, for example on Hugging Face, and available before offline execution. ONNX is our portable CPU model-file format. The working deadline is **around November 2, unconfirmed**. The notes also mention a required, unscored Express add-on viewer; confirm the complete submission checklist.
+Both structural JSON checks and an **AI visual judge** matter: a valid JSON can still look bad. Any learned weights must be publicly accessible, for example on Hugging Face, and available before offline execution. ONNX is our portable CPU model-file format. The working deadline is **around November 2, unconfirmed**. Stage 1 deliverables in the challenge PDF, as confirmed by the project owner, are **engine code + Dockerfile + a short read-me**; the **Express add-on is for the finale only**. **Unresolved conflict:** local `FAQ.md:105` instead includes a required, unscored viewer add-on in Stage 1. Confirm this discrepancy with the organisers before code freeze. The PDF is not on this Mac; that distinction comes from the owner’s reading, not a new PDF inspection.
 
 ## 2. How the engine works
 
@@ -111,7 +111,7 @@ Every image reuses an existing source and v5 output: **source left, output right
 
 The reported human-evaluation snapshot has **245 labels: 41 good / 33 okay / 171 bad**. Its hand scorer gets pooled pairwise **0.830** (how often it orders differently labelled outputs correctly), bad-versus-rest AUC **0.841** (how well scores separate bad from other outputs), in-band AUC **0.754** for hand scores at least 85, and within-design **0.546** averaged across 15 designs. The separate pair-weighted within-design result is 0.788; it is dominated by organiser-sample pairs and should not replace 0.546.
 
-**Snapshot gap:** the current read-only local label files have **227 records: 39 good / 28 okay / 160 bad**. The organiser-sample file has 45 records versus the historical handoff’s 63. The metrics above are historical reported results, not a recomputation on those 227 records. Restore the matching snapshot before attempting exact reproduction.
+**Counting labels correctly:** the eight local files contain **227 top-level cases and 245 labelled outputs**, including saved histories: **41 good / 33 okay / 171 bad**. The organiser file contains 45 cases plus 18 historical outputs, making the reported 63 labels. `critic/eval.py` and `eval/calibrate.py` deduplicate by case and exact output, keeping the latest verdict. No matching-snapshot labels are missing.
 
 **Recall** here means the share of 40 test cases whose displayed candidate pool contains at least one human-acceptable layout. It does not mean the engine picked that layout. The rules page had **17/39 reviewed** acceptable; the generator page had **15/40**. One rules case was unreviewed, so keep denominators visible. Human labels and labelled designs are evaluation-only: never training or early-stopping data.
 
@@ -172,7 +172,7 @@ Next: test analysis changes for backdrops and card/container membership, normali
 | `gen-integration` | Generator adapter, default-off switch, deterministic path budgets | Based on rules; generator package was copied in, not merged |
 | `team-docs` | This guide, based on main | Documentation only; not merged |
 
-The current remote-tracking list lacks `origin/rules`, `origin/generator` and `origin/gen-integration`; those local branches may need publishing before teammates can fetch them. Do not assume every local branch is already on GitHub.
+Experimental branches remain separate from main. Fetch `origin` and inspect `git branch -r` before choosing one; a published experimental branch is not a merge into main or an approved submission.
 
 On the shared Mac, `/Volumes/Extreme/AdobeHackathon/` contains:
 
@@ -242,7 +242,7 @@ Then open `http://127.0.0.1:8781/recall3/`. Labels save in that checkout. The ex
 | Scorer: sibling consistency and box-to-content | Diagnose whether equal-status siblings and space inside proposed boxes explain confirmed human disagreements; keep the scorer frozen until evidence is clear. |
 | Auto-recall filter | Prioritise candidate pools likely to lack an acceptable option; validate against human recall rather than hand-score gains. |
 | Docker with limited CPUs | Check offline correctness, determinism, image size and worst-case time on a constrained machine. |
-| README/HANDOFF refresh | Reconcile mainline, frozen fallback, experimental branches, missing label snapshots and the new default-off integration. |
+| README/HANDOFF refresh | Reconcile mainline, frozen fallback, experimental branches, label-history counting and the new default-off integration. |
 | Licence email to organisers | Confirm treatment of Crello-derived geometry and learned weights, and document the reply. |
 | Official deadline | Confirm the approximate November 2 date and final submission checklist. |
 
