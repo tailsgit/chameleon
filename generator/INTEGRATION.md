@@ -11,25 +11,66 @@ by the ONNX adapter. CPU only, one thread, fixed 16 latent vectors, source kind
 
 ## Runtime policy
 
-- Default **K=8**, selected after the full 600-case max CPU was 7.165 s.
-- Per case: 4 recipe attempts on tight groups, 4 retrieval plans shared across
-  analyses, 16 base realizations, at most K generator realizations, 3 contrast
-  renders. Existing 4 preserve variants per analysis and solver settings stay intact.
-- `GEN_OFF=1` disables generator proposals and retains these count caps. It is
-  deliberately different from rules; capped-OFF quality is measured separately.
-- `GEN_K=4/6/8` overrides the fit cap. Fixed count budgets replace runtime elapsed
-  cutoffs. Optional critic search, still off by default, uses 8 fixed rounds.
-- Rigid fitting uses the existing `Sizer.floor_scale()` so thin members remain
-  visible when the canvas permits it. Entire rigid groups scale uniformly.
-- Backgrounds, panels, attachments, decorations and rotations keep engine fitting
-  semantics. There is no generator CP-SAT projection.
+- Generator **OFF by default**. `GEN_ON=1` opts in; `GEN_OFF=1` overrides it.
+  The default resize path imports neither the generator nor ONNX Runtime and
+  reads no model files. Explicit opt-in retains K=8 and the fixed latent table.
+- One feasible representative for each applicable recipe family. Flow splits
+  prefer plain analysis with centered justification; other recipes retain tight
+  groups, with fallback when inapplicable. No case-specific paths or IDs.
+- Every feasible existing preserve variant (share/fit/edges/between) from each
+  distinct analysis is realized. CP-SAT code/settings are unchanged.
+- Retrieval gets seven representatives from fixed strata over the existing
+  top-30 ranking, plus a plain-analysis head representative when distinct. A
+  full list uses ranks 0/4/9/14/19/24/29; shorter lists fill from available ranks
+  without rescaling all strata. This keeps tail coverage as library size varies.
+- Every required plan and every applicable focal/panel realization mode has a
+  representative before the shared budget of **four additional realizations**.
+  The 600-case run realizes 9–27 base candidates per case. All work is count
+  bounded; there are no machine-speed cutoffs.
+- Existing scorer weights, safety tiers, local repair, finishing and contrast
+  cap of 3 are unchanged. There is no generator CP-SAT projection.
+- Rigid fitting retains `Sizer.floor_scale()` and uniform group scaling.
+
+## Current validation
+
+Default-OFF 600 dev cases: process CPU p50/p95/max **1.293 / 3.491 / 6.821 s**;
+normal <=9 s gate passes. Mean hand-score delta versus the committed rules CSV
+is **-0.614150**, with **17 drops >10 points** (prior capped-OFF: -1.000050 and
+21 drops). All final hard-rule outcomes match the prior run: 598/600 pass.
+
+The three diagnosed lost accepted layouts return pixel-exact, pass hard rules
+and survive the existing guard. Two appear in the top eight; only the LinkedIn
+layout is the final pick. The preserved portrait is below the display cutoff.
+This establishes pool recovery, not three newly labelled recall successes.
+
+Same 40 cases twice normally and once with four CPU-burn processes: **zero
+output-byte and candidate-pool mismatches**. Loaded recall maximum: 8.893 s.
+The <=9 s timing claim is the full-600 normal default-OFF run.
+
+15 focused tests pass. A fresh-process test forbids and records attempted
+ONNX/generator imports and model reads, then asserts no attempts occurred.
+Explicit `GEN_ON=1` smoke still fits 8/8 passing proposals with no Torch import.
+
+Frozen scorer evidence uses the labelled generator-ON state at d3aedcc and two
+accepted comparator layouts verified against original pixels. For LinkedIn,
+the accepted layout already scores higher (92.67 vs 90.46); its old failure is
+exclusion. For the portrait, the bad layout scores higher (90.03 vs 80.88),
+mainly through coverage and key-size terms. Ten other cases have no confirmed
+acceptable comparator and remain unknown. No scorer changes were made.
+
+Full per-case scores, 17 regressions, exact recovery checks and term tables are
+outside git at `data/generator/integration/path_budget/`. Reproduce with
+`python -m eval.path_budget_eval NEW_MODE` (add `--suite recall`, then repeat
+with a fresh mode and `--load`) and `python -m eval.scorer_pair_evidence`.
+Use the existing venv, TMPDIR, PYTHONHASHSEED=2026 and caffeinate. Completed
+result shards validate their engine/evaluator fingerprints and are immutable.
 
 Model weights are local and ignored at `engine/data/generator.onnx` (6,039,539
 bytes); copy source is `data/generator/runs/cvae_full`. interface.json declares
 and verifies the original fixed latent table and model checksum. No data or
 weights are committed.
 
-## Measured checks
+## Earlier generator-ON checks
 
 - 9 focused tests pass. 200 held-out raw designs reanalyze to the cached training
   groups; shared features and engine/training ONNX outputs are exact. Float32
@@ -53,7 +94,7 @@ tables, and all case IDs are outside git at `data/generator/integration/`.
 Completed per-case result files are immutable and validate their engine-code
 fingerprint; use a new mode name after source changes.
 
-## Final cap-tuning pass
+## Earlier flat-cap tuning pass
 
 K=8 and the contrast cap of 3 stayed fixed. Trials used the same 600 dev cases,
 seed 2026, four workers, full-resize process CPU time and committed rules CSV
@@ -72,8 +113,8 @@ Under doubled load (four workers plus four CPU burns), all 600 cases measured
 1.5x caps. Both loaded runs have zero output-byte mismatches against their normal
 runs. No loaded 2x-cap trial was needed after its normal maximum exceeded 9 s.
 
-**Retain current caps. No tested setting meets both the new normal <=9 s and
-loaded <=12 s gates.** The 1.5x score gain is real, but misses the loaded limit;
+**Outcome at that stage: retain the old flat caps. No tested setting met both
+the normal <=9 s and loaded <=12 s gates.** The 1.5x score gain is real, but misses the loaded limit;
 2x misses the normal limit. This pass does not claim the loaded timing gate
 passed, or change the scorer, preserve solver, generator, or recall candidates.
 Further tightening was not part of this requested loosening pass.
@@ -107,7 +148,8 @@ and the final verification report stay under `data/generator/integration/`.
 Recall3 has the same 40 cases/order as recall2. It marks **GENERATOR WON** cases
 and unique generator contributions. Source/output PNGs and tags are ignored.
 
-From this worktree, using the existing venv:
+The existing recall3 page remains the frozen, labelled generator-ON comparison;
+it was not replaced by the new default-OFF pool. From this worktree:
 
 ```sh
 export TMPDIR=/Volumes/Extreme/AdobeHackathon/tmp
