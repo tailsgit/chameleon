@@ -46,7 +46,7 @@ def operations():
 
 
 def snapshot()->str:
-    names=['engine/resize.py','engine/recipes.py','engine/retrieve.py','engine/gen_candidates.py','engine/search.py','engine/select.py']
+    names=['engine/resize.py','engine/recipes.py','engine/retrieve.py','engine/gen_candidates.py','engine/search.py','engine/select.py','engine/candidate_budget.py']
     h=hashlib.sha256()
     for name in names:h.update(name.encode());h.update((REPO/name).read_bytes())
     return h.hexdigest()
@@ -111,6 +111,8 @@ def one(job:tuple)->dict:
             t=time.process_time();w=time.perf_counter();output=resize(source,target)
             cpu=time.process_time()-t;wall=time.perf_counter()-w
     generated=list(gen.LAST.get('outputs',[]));stats={key:v for key,v in gen.LAST.items() if key!='outputs'}
+    from engine.candidate_budget import LAST as budget_stats
+    stats['path_budget']=dict(budget_stats)
     row=dict(case=name,sample=sample,code=version,k=k,bucket=bucket(source,target),cpu_s=cpu,wall_s=wall,
              sha=hashlib.sha256(canonical(output).encode()).hexdigest(),wire_sha=hashlib.sha256(json.dumps(output,indent=2).encode()).hexdigest(),passed=not check(source,target,output),
              score=score(source,target,output)['total'],generator=stats,operations=measured,
